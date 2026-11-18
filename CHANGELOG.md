@@ -40,6 +40,10 @@ Release candidate. Not yet tagged.
 
 ### Changed
 
+- Daily coach check-in: notifications are expandable in the shade (BigText), and
+  the message names what is still open today — overdue training, protein gap,
+  mood check-in, unfinished habits, remaining plan blocks and unchecked
+  shopping — and ends with one concrete action instead of summarizing totals.
 - Release builds are minified and resource-shrunk with R8 and obfuscated Dart
   symbols; symbol files are archived with each artifact.
 - Release signing fails loudly when `android/key.properties` is missing instead

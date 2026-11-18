@@ -41,8 +41,8 @@ tracking) and expands it into one place for every area of life you want to get 1
 - **Setup today:** the coach needs a base URL, API key and model name entered in Settings — it is
   wired to whatever endpoint you point it at, not to a service of ours. A hosted option that works
   out of the box is planned; until then, expect to bring a key.
-- Optional **daily digest notification** across workouts, meals, money and mood, scheduled
-  entirely on-device (no push servers, no Google services).
+- Optional **daily check-in notification** that names what is still open and nudges one action,
+  scheduled entirely on-device (no push servers, no Google services).
 
 ## Trust and privacy
 
