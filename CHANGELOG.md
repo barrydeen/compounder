@@ -47,6 +47,9 @@ Release candidate. Not yet tagged.
 - Settings only shows the "Your own endpoint" fields (base URL, token, model,
   save button) while that source is selected, so the form is not presented for
   an endpoint that is not in use.
+- Sleep durations are shown and quoted as hours and minutes ("2H 30M") in the
+  health screens, the home summary and the coach's health tools instead of raw
+  minute counts, and the coach is told to repeat them verbatim.
 - CI is now a single fast job (format check, analyze, tests) on pushes to
   `main` and on pull requests: the per-PR release build (~9 minutes), the
   gitleaks scan and the second UTC test pass were dropped, and `main` has no

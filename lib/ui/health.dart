@@ -4,6 +4,7 @@ import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../health/format.dart';
 import '../health/models.dart';
 import '../health/service.dart';
 import '../domain/domain.dart';
@@ -239,15 +240,19 @@ class _HealthDataScreenState extends State<HealthDataScreen> {
             else
               Wrap(spacing: 16, runSpacing: 8, children: [
                 _stat('Last night',
-                    '${_count(last['asleepMinutes'] as num?)} min'),
+                    formatSleepDuration(last['asleepMinutes'] as num?)),
                 _stat('Bedtime', '${last['bedtime'] ?? '—'}'),
                 _stat('Wake', '${last['wake'] ?? '—'}'),
                 _stat('Efficiency',
                     formatEfficiencyPercent(last['efficiencyPercent'] as num?)),
-                _stat('Deep',
-                    '${_count((last['stages'] as Map?)?['SLEEP_DEEP'] as num?)} min'),
-                _stat('REM',
-                    '${_count((last['stages'] as Map?)?['SLEEP_REM'] as num?)} min'),
+                _stat(
+                    'Deep',
+                    formatSleepDuration(
+                        (last['stages'] as Map?)?['SLEEP_DEEP'] as num?)),
+                _stat(
+                    'REM',
+                    formatSleepDuration(
+                        (last['stages'] as Map?)?['SLEEP_REM'] as num?)),
               ]),
             const SizedBox(height: 16),
             if (sleep.isNotEmpty)
@@ -556,7 +561,7 @@ class HealthSummaryCard extends StatelessWidget {
             title: Text('Fitness today', style: t.titleMedium),
             subtitle: Text([
               if (last != null)
-                'Sleep ${_count(last['asleepMinutes'] as num?)} min',
+                'Sleep ${formatSleepDuration(last['asleepMinutes'] as num?)}',
               if (resting != null)
                 'Resting HR ${_count(resting['value'] as num?)} bpm',
               if (steps is Map) 'Steps ${_count(steps['value'] as num?)}',

@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import '../health/analysis.dart';
 import '../health/categories.dart';
+import '../health/format.dart';
 import '../health/models.dart';
 import '../health/repository.dart';
 import '../health/service.dart';
@@ -30,17 +31,72 @@ import 'tools.dart';
   );
 }
 
+/// Sleep durations in coach payloads are display strings ("2H 30M"), never raw
+/// minute counts, so the model quotes them the way the app shows them.
 Map<String, Object?> _sleepSessionMap(SleepSession s) => {
       'date': s.date,
       'bedtime': _clock(s.start),
       'wake': _clock(s.end),
-      'inBedMinutes': s.inBedMinutes,
-      'asleepMinutes': s.asleepMinutes,
-      'awakeMinutes': s.awakeMinutes,
+      'inBed': formatSleepDuration(s.inBedMinutes),
+      'asleep': formatSleepDuration(s.asleepMinutes),
+      'awake': formatSleepDuration(s.awakeMinutes),
       'efficiencyPercent': s.efficiency,
-      'stagesMinutes': s.stages,
+      'stages': _stagesMap(s.stages),
       'source': s.sourceName,
     };
+
+Map<String, Object?> _stagesMap(Map<String, Object?> stages) => {
+      for (final entry in stages.entries)
+        entry.key: formatSleepDuration(entry.value as num?),
+    };
+
+/// Replaces the minute counters in an overview/aggregated sleep block with
+/// display durations, keeping efficiency, stages and provenance.
+Map<String, Object?> _displayNight(Map<String, Object?> n) {
+  final out = <String, Object?>{
+    'date': n['date'],
+    'bedtime': n['bedtime'],
+    'wake': n['wake'],
+    'efficiencyPercent': n['efficiencyPercent'] ?? n['efficiency'],
+  };
+  for (final pair in const [
+    ('inBedMinutes', 'inBed'),
+    ('asleepMinutes', 'asleep'),
+    ('awakeMinutes', 'awake'),
+  ]) {
+    final v = n[pair.$1];
+    if (v is num) out[pair.$2] = formatSleepDuration(v);
+  }
+  final stages = n['stages'];
+  if (stages is Map) out['stages'] = _stagesMap(stages.cast<String, Object?>());
+  if (n['source'] != null) out['source'] = n['source'];
+  return out;
+}
+
+Map<String, Object?> _displaySleepOverview(Map<String, dynamic>? sleep) {
+  if (sleep == null) return const {};
+  final out = <String, Object?>{'nights': sleep['nights']};
+  final average = sleep['averageAsleepMinutes'];
+  if (average is num) out['averageAsleep'] = formatSleepDuration(average);
+  final last = sleep['lastNight'];
+  if (last is Map) {
+    out['lastNight'] = _displayNight(last.cast<String, Object?>());
+  }
+  return out;
+}
+
+/// One day of a sleep metric: the day's total as a display duration plus the
+/// per-night breakdown when the row carries one.
+Map<String, Object?> _sleepPoint(HealthDayStat d) {
+  final out = <String, Object?>{
+    'date': d.day,
+    'duration': formatSleepDuration(d.sum),
+    'count': d.count,
+  };
+  final night = _displayNight({...d.detail})..remove('date');
+  out.addAll(night);
+  return out;
+}
 
 String _clock(int millis) {
   final d = DateTime.fromMillisecondsSinceEpoch(millis);
@@ -55,9 +111,10 @@ class HealthOverviewTool extends CoachTool {
   @override
   ToolSpec get spec => ToolSpec(
         'getHealthOverview',
-        'Health Connect summary for a date range: sleep (last night, averages, stages), '
-            'heart rate/resting HR/HRV, activity (steps, distance, calories, workouts), body '
-            'measurements and vitals. Dates YYYY-MM-DD; omitted = last 7 days.',
+        'Health Connect summary for a date range: sleep (last night, averages, stages, durations in '
+            'hours and minutes such as "2H 30M"), heart rate/resting HR/HRV, activity (steps, '
+            'distance, calories, workouts), body measurements and vitals. Dates YYYY-MM-DD; '
+            'omitted = last 7 days.',
         dateRangeSchema,
       );
 
@@ -68,6 +125,8 @@ class HealthOverviewTool extends CoachTool {
     final status = await service.status();
     return jsonEncode({
       ...overview,
+      'sleep':
+          _displaySleepOverview(overview['sleep'] as Map<String, dynamic>?),
       'sync': {
         'connected': status['enabled'],
         'lastSync': status['lastSync'],
@@ -84,8 +143,9 @@ class SleepTool extends CoachTool {
   @override
   ToolSpec get spec => ToolSpec(
         'getSleep',
-        'Sleep from Health Connect for a date range: per-night bedtime, wake time, asleep/awake '
-            'minutes, sleep stages and efficiency. Dates YYYY-MM-DD; omitted = last 14 days.',
+        'Sleep from Health Connect for a date range: per-night bedtime, wake time, time in bed, '
+            'asleep/awake durations (hours and minutes, e.g. "2H 30M"), sleep stages and '
+            'efficiency. Dates YYYY-MM-DD; omitted = last 14 days.',
         dateRangeSchema,
       );
 
@@ -95,36 +155,29 @@ class SleepTool extends CoachTool {
     final sessions = await repository.sleepSessions(from: r.from, to: r.to);
     final days = await repository.daily(type: 'SLEEP', from: r.from, to: r.to);
     final nights = sessions.map(_sleepSessionMap).toList();
+    final asleep = sessions
+        .map((s) => s.asleepMinutes.toDouble())
+        .where((v) => v > 0)
+        .toList();
     // Include compacted/aggregated nights for older history that no longer has
     // raw stage records.
     final known = nights.map((n) => n['date']).toSet();
     for (final d in days) {
       if (known.contains(d.day)) continue;
+      if (d.sum > 0) asleep.add(d.sum);
       nights.add({
-        'date': d.day,
-        'bedtime': null,
-        'wake': null,
-        'inBedMinutes': d.detail['inBedMinutes'],
-        'asleepMinutes': d.sum.round(),
-        'awakeMinutes': d.detail['awakeMinutes'],
-        'efficiencyPercent': d.detail['efficiency'],
-        'stagesMinutes': d.detail['stages'],
-        'source': null,
+        ..._displayNight({'asleepMinutes': d.sum, ...d.detail}),
         'aggregated': true,
       });
     }
     nights.sort((a, b) => (a['date'] as String).compareTo(b['date'] as String));
-    final asleep = nights
-        .map((n) => (n['asleepMinutes'] as num?)?.toDouble() ?? 0)
-        .where((v) => v > 0)
-        .toList();
+    final average =
+        asleep.isEmpty ? null : asleep.reduce((a, b) => a + b) / asleep.length;
     return jsonEncode({
       'from': dayKey(r.from),
       'to': dayKey(r.to - 1),
       'nights': nights,
-      'averageAsleepMinutes': asleep.isEmpty
-          ? null
-          : round1(asleep.reduce((a, b) => a + b) / asleep.length),
+      'averageAsleep': average == null ? null : formatSleepDuration(average),
     });
   }
 }
@@ -225,16 +278,7 @@ class HealthMetricTool extends CoachTool {
       return jsonEncode({
         'metric': rawMetric,
         'label': info.label,
-        'unit': info.unit,
-        'points': [
-          for (final d in days)
-            {
-              'date': d.day,
-              'minutes': d.sum.round(),
-              'count': d.count,
-              ...d.detail,
-            }
-        ],
+        'points': [for (final d in days) _sleepPoint(d)],
       });
     }
     if (rawMetric == 'NUTRITION') {
