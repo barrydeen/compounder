@@ -1,0 +1,218 @@
+{
+  "note": "Reference output of grocery.py from huggingface.co/barrydeen/grocery-next-model. Regenerate with: python3 grocery.py predict <items> --model model.json --pop-penalty <penalty> --top 5",
+  "model_sha256": "d55de601a87a05c1f9f3d5b58379ac9f3617d0c2560a1745699bf162bab66884",
+  "cases": [
+    {
+      "items": [
+        "injera",
+        "berbere"
+      ],
+      "popularity_penalty": 8.0,
+      "limit": 5,
+      "expected": [
+        [
+          "niter kibbeh",
+          0.4778230392231809
+        ],
+        [
+          "vegetable oil",
+          0.45364174533455026
+        ],
+        [
+          "fresh ginger",
+          0.37273591625908875
+        ],
+        [
+          "green chilies",
+          0.31818391363748977
+        ],
+        [
+          "ground cardamom",
+          0.20061732577790137
+        ]
+      ]
+    },
+    {
+      "items": [
+        "tomatoes",
+        "onions"
+      ],
+      "popularity_penalty": 8.0,
+      "limit": 5,
+      "expected": [
+        [
+          "garlic",
+          0.11847688587126563
+        ],
+        [
+          "olive oil",
+          0.0921376044281234
+        ],
+        [
+          "rice",
+          0.09114028205545255
+        ],
+        [
+          "tomato paste",
+          0.08118680547217291
+        ],
+        [
+          "potatoes",
+          0.0810813252949437
+        ]
+      ]
+    },
+    {
+      "items": [
+        "bread",
+        "pasta",
+        "cheese"
+      ],
+      "popularity_penalty": 8.0,
+      "limit": 5,
+      "expected": [
+        [
+          "basil",
+          0.2493796119228667
+        ],
+        [
+          "pandesal",
+          0.2486336390231589
+        ],
+        [
+          "white beans",
+          0.24390052876092677
+        ],
+        [
+          "corned beef",
+          0.2414310577829351
+        ],
+        [
+          "zucchini",
+          0.2266971756041791
+        ]
+      ]
+    },
+    {
+      "items": [
+        "chicken thighs",
+        "garlic"
+      ],
+      "popularity_penalty": 8.0,
+      "limit": 5,
+      "expected": [
+        [
+          "ginger",
+          0.1213742862596939
+        ],
+        [
+          "onions",
+          0.10943442491024027
+        ],
+        [
+          "tomatoes",
+          0.10225409894497184
+        ],
+        [
+          "coconut milk",
+          0.07973402434952226
+        ],
+        [
+          "carrots",
+          0.07782558119998663
+        ]
+      ]
+    },
+    {
+      "items": [
+        "tomatoes",
+        "onions"
+      ],
+      "popularity_penalty": 0.0,
+      "limit": 5,
+      "expected": [
+        [
+          "garlic",
+          0.594144657374987
+        ],
+        [
+          "olive oil",
+          0.2336346397998843
+        ],
+        [
+          "potatoes",
+          0.21132109981156472
+        ],
+        [
+          "rice",
+          0.19803481286620472
+        ],
+        [
+          "carrots",
+          0.1945301305428983
+        ]
+      ]
+    },
+    {
+      "items": [
+        "injera",
+        "unmatched thing"
+      ],
+      "popularity_penalty": 8.0,
+      "limit": 5,
+      "expected": [
+        [
+          "berbere",
+          0.2615035884544555
+        ],
+        [
+          "vegetable oil",
+          0.2591354989735062
+        ],
+        [
+          "niter kibbeh",
+          0.22929346013637233
+        ],
+        [
+          "fresh ginger",
+          0.2048000133293393
+        ],
+        [
+          "green chilies",
+          0.19754819665645013
+        ]
+      ]
+    },
+    {
+      "items": [
+        "vegetable oil",
+        "green chilies",
+        "ground cardamom"
+      ],
+      "popularity_penalty": 8.0,
+      "limit": 5,
+      "expected": [
+        [
+          "niter kibbeh",
+          0.2926793592825251
+        ],
+        [
+          "berbere",
+          0.2422749189825863
+        ],
+        [
+          "injera",
+          0.22816293728992382
+        ],
+        [
+          "fresh ginger",
+          0.20823978120924996
+        ],
+        [
+          "ground turmeric",
+          0.14443536976847063
+        ]
+      ]
+    }
+  ]
+}
