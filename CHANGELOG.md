@@ -44,6 +44,9 @@ Release candidate. Not yet tagged.
   the message names what is still open today — overdue training, protein gap,
   mood check-in, unfinished habits, remaining plan blocks and unchecked
   shopping — and ends with one concrete action instead of summarizing totals.
+- Settings only shows the "Your own endpoint" fields (base URL, token, model,
+  save button) while that source is selected, so the form is not presented for
+  an endpoint that is not in use.
 - Release builds are minified and resource-shrunk with R8 and obfuscated Dart
   symbols; symbol files are archived with each artifact.
 - Release signing fails loudly when `android/key.properties` is missing instead
