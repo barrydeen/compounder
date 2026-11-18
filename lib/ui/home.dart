@@ -173,8 +173,7 @@ class _HomeTabState extends State<HomeTab> with WidgetsBindingObserver {
       appBar: AppBar(
         leading: const DrawerMenuButton(),
         title: Row(children: [
-          TintedIconCircle(Icons.eco,
-              background: scheme.primary, foreground: scheme.onPrimary),
+          const CompounderLogo(),
           const SizedBox(width: 10),
           // The AppBar title is bounded by the screen width; at accessibility
           // text scales an unconstrained Text overflows the Row.

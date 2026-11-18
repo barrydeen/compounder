@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The spiral artwork is a single full-bleed image, so it is the background
+     layer: the launcher's mask crops it the same way it crops a legacy icon.
+     The foreground layer is intentionally empty and the monochrome layer is a
+     silhouette for Android 13+ themed icons. -->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@mipmap/ic_launcher_background" />
+    <foreground android:drawable="@mipmap/ic_launcher_foreground" />
+    <monochrome android:drawable="@mipmap/ic_launcher_monochrome" />
+</adaptive-icon>

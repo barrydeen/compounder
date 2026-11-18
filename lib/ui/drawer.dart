@@ -4,6 +4,7 @@ import 'habits.dart';
 import 'heatmap.dart';
 import 'planner.dart';
 import 'settings.dart';
+import 'widgets.dart';
 
 /// Exposes the shell's drawer opener to the tab screens so the hamburger can
 /// live in each tab's AppBar without threading a callback through five
@@ -141,15 +142,7 @@ class AppDrawer extends StatelessWidget {
             Padding(
               padding: const EdgeInsets.fromLTRB(20, 24, 20, 16),
               child: Row(children: [
-                Container(
-                  width: 40,
-                  height: 40,
-                  decoration: BoxDecoration(
-                    color: scheme.primary,
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Icon(Icons.eco, size: 22, color: scheme.onPrimary),
-                ),
+                const CompounderLogo(),
                 const SizedBox(width: 12),
                 // The drawer is a fixed 304dp wide, so the label must be
                 // constrained: at accessibility text scales (Android's font

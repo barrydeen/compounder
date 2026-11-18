@@ -169,81 +169,85 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
             ]),
           ),
-          const SizedBox(height: 16),
-          const SectionHeader('Your own endpoint'),
-          const SizedBox(height: 8),
-          Card(
-            color: scheme.surfaceContainerLow,
-            child: Padding(
-              padding: const EdgeInsets.all(20),
-              child: Column(children: [
-                Text(
-                    'Used when "Your own endpoint" is selected above. It powers '
-                    'meal photo analysis and the coach. Data is sent only to '
-                    'this endpoint — never anywhere else.',
-                    style:
-                        t.bodyMedium?.copyWith(color: scheme.onSurfaceVariant)),
-                const SizedBox(height: 12),
-                TextField(
-                    controller: baseUrl,
-                    onChanged: (_) => setState(() {}),
-                    decoration: const InputDecoration(
-                        labelText: 'Base URL', hintText: 'http://…/v1')),
-                // The app allows cleartext HTTP (AndroidManifest
-                // usesCleartextTraffic="true") so a LAN Ollama endpoint works.
-                // Say so where the endpoint is entered: over http:// the token
-                // and every prompt travel unencrypted (audit m6).
-                if (baseUrl.text
-                    .trim()
-                    .toLowerCase()
-                    .startsWith('http://')) ...[
-                  const SizedBox(height: 8),
-                  Row(children: [
-                    Icon(Icons.lock_open, size: 16, color: scheme.error),
-                    const SizedBox(width: 6),
-                    Expanded(
-                      child: Text(
-                          'This endpoint is http://, so your API token and '
-                          'health data travel unencrypted. Use https:// or a '
-                          'trusted local network.',
-                          style: t.bodySmall?.copyWith(color: scheme.error)),
-                    ),
-                  ]),
-                ],
-                const SizedBox(height: 12),
-                TextField(
-                  controller: apiKey,
-                  obscureText: !showApiKey,
-                  decoration: InputDecoration(
-                    labelText: 'API token',
-                    suffixIcon: IconButton(
-                      icon: Icon(
-                          showApiKey ? Icons.visibility_off : Icons.visibility),
-                      onPressed: () => setState(() => showApiKey = !showApiKey),
+          if (store.aiSource == AiSource.byo) ...[
+            const SizedBox(height: 16),
+            const SectionHeader('Your own endpoint'),
+            const SizedBox(height: 8),
+            Card(
+              color: scheme.surfaceContainerLow,
+              child: Padding(
+                padding: const EdgeInsets.all(20),
+                child: Column(children: [
+                  Text(
+                      'This endpoint powers meal photo analysis and the coach. '
+                      'Data is sent only to this endpoint — never anywhere '
+                      'else.',
+                      style: t.bodyMedium
+                          ?.copyWith(color: scheme.onSurfaceVariant)),
+                  const SizedBox(height: 12),
+                  TextField(
+                      controller: baseUrl,
+                      onChanged: (_) => setState(() {}),
+                      decoration: const InputDecoration(
+                          labelText: 'Base URL', hintText: 'http://…/v1')),
+                  // The app allows cleartext HTTP (AndroidManifest
+                  // usesCleartextTraffic="true") so a LAN Ollama endpoint works.
+                  // Say so where the endpoint is entered: over http:// the token
+                  // and every prompt travel unencrypted (audit m6).
+                  if (baseUrl.text
+                      .trim()
+                      .toLowerCase()
+                      .startsWith('http://')) ...[
+                    const SizedBox(height: 8),
+                    Row(children: [
+                      Icon(Icons.lock_open, size: 16, color: scheme.error),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                            'This endpoint is http://, so your API token and '
+                            'health data travel unencrypted. Use https:// or a '
+                            'trusted local network.',
+                            style: t.bodySmall?.copyWith(color: scheme.error)),
+                      ),
+                    ]),
+                  ],
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: apiKey,
+                    obscureText: !showApiKey,
+                    decoration: InputDecoration(
+                      labelText: 'API token',
+                      suffixIcon: IconButton(
+                        icon: Icon(showApiKey
+                            ? Icons.visibility_off
+                            : Icons.visibility),
+                        onPressed: () =>
+                            setState(() => showApiKey = !showApiKey),
+                      ),
                     ),
                   ),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                    controller: model,
-                    decoration: const InputDecoration(
-                        labelText: 'Model',
-                        hintText: 'any vision + tool-calling model')),
-                const SizedBox(height: 12),
-                FilledButton(
-                  onPressed: () async {
-                    await store.saveAi(AiSettings(
-                      baseUrl: baseUrl.text.trim(),
-                      apiKey: apiKey.text.trim(),
-                      model: model.text.trim(),
-                    ));
-                    if (context.mounted) snack('AI settings saved');
-                  },
-                  child: const Text('Save AI settings'),
-                ),
-              ]),
+                  const SizedBox(height: 12),
+                  TextField(
+                      controller: model,
+                      decoration: const InputDecoration(
+                          labelText: 'Model',
+                          hintText: 'any vision + tool-calling model')),
+                  const SizedBox(height: 12),
+                  FilledButton(
+                    onPressed: () async {
+                      await store.saveAi(AiSettings(
+                        baseUrl: baseUrl.text.trim(),
+                        apiKey: apiKey.text.trim(),
+                        model: model.text.trim(),
+                      ));
+                      if (context.mounted) snack('AI settings saved');
+                    },
+                    child: const Text('Save AI settings'),
+                  ),
+                ]),
+              ),
             ),
-          ),
+          ],
           const SizedBox(height: 16),
           const SectionHeader('Daily goals'),
           const SizedBox(height: 8),
@@ -636,7 +640,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               SwitchListTile(
                 title: const Text('A daily check-in'),
                 subtitle: Text(
-                    'One coach message across workouts, meals, money and mood. Scheduled on this device — no Google services.'),
+                    'A daily nudge on what\'s still open across training, food, mind, habits and your plan. Scheduled on this device — no Google services.'),
                 value: store.coachEnabled,
                 onChanged: (v) async {
                   await store.setCoach(enabled: v);

@@ -95,6 +95,29 @@ class TintedIconCircle extends StatelessWidget {
   }
 }
 
+/// The Compounder mark: the compounding spiral, rounded like a launcher icon.
+/// It sits beside the app name in the home app bar and the drawer header, so it
+/// is decorative and excluded from semantics.
+class CompounderLogo extends StatelessWidget {
+  final double size;
+  const CompounderLogo({super.key, this.size = 40});
+
+  @override
+  Widget build(BuildContext context) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(size * 0.3),
+      child: Image.asset(
+        'assets/logo.png',
+        width: size,
+        height: size,
+        fit: BoxFit.cover,
+        filterQuality: FilterQuality.high,
+        excludeFromSemantics: true,
+      ),
+    );
+  }
+}
+
 class EmptyState extends StatelessWidget {
   final String title, subtitle;
   final IconData? icon;
