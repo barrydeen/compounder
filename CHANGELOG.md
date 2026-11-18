@@ -47,6 +47,11 @@ Release candidate. Not yet tagged.
 - Settings only shows the "Your own endpoint" fields (base URL, token, model,
   save button) while that source is selected, so the form is not presented for
   an endpoint that is not in use.
+- CI is now a single fast job (format check, analyze, tests) on pushes to
+  `main` and on pull requests: the per-PR release build (~9 minutes), the
+  gitleaks scan and the second UTC test pass were dropped, and `main` has no
+  branch protection while the app is in development — direct pushes are
+  allowed and CI reports status without blocking merges.
 - Release builds are minified and resource-shrunk with R8 and obfuscated Dart
   symbols; symbol files are archived with each artifact.
 - Release signing fails loudly when `android/key.properties` is missing instead
