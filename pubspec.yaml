@@ -11,7 +11,7 @@ dependencies:
     sdk: flutter
   cupertino_icons: ^2.0.0
   provider: ^6.1.2
-  sqflite: ^2.4.1
+  sqflite: ^2.4.6
   path: ^1.9.0
   path_provider: ^2.1.4
   shared_preferences: ^2.5.6
@@ -75,9 +75,9 @@ dev_dependencies:
   flutter_lints: ^6.0.0
   integration_test:
     sdk: flutter
-  sqflite_common_ffi: ^2.4.5
+  sqflite_common_ffi: ^2.4.7
   # Only for the grocery model test that re-checks the vendored asset's sha256.
-  crypto: ^3.0.7
+  crypto: ^3.0.8
 
 flutter:
   uses-material-design: true
