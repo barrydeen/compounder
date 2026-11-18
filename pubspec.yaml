@@ -82,6 +82,8 @@ dev_dependencies:
 flutter:
   uses-material-design: true
   assets:
+    # The app mark (compounding spiral), also used for the launcher icons.
+    - assets/logo.png
     - assets/exercises.json
     # Next-item grocery recommender (huggingface.co/barrydeen/grocery-next-model),
     # vendored verbatim; sha256 pinned in lib/domain/grocery_model.dart.

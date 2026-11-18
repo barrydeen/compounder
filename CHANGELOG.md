@@ -16,6 +16,10 @@ Release candidate. Not yet tagged.
 
 ### Added
 
+- **App icon and in-app mark** — a compounding-spiral logo replaces the default
+  Flutter launcher icon on Android and iOS (legacy and adaptive icons, including
+  an Android 13 themed-icon silhouette), and the same mark appears in the home
+  app bar and drawer header (`assets/logo.png`).
 - **Day planner and planning pillar** — chronological day planning with schema
   v13 `plan_blocks`, plus coach tools to read, add, move, check off and delete
   plan blocks.
