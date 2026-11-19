@@ -93,3 +93,4 @@ flutter:
     - assets/sounds/rest_tick.wav
     - assets/sounds/rest_go.wav
     - assets/sounds/pr_fanfare.wav
+    - assets/sounds/pr_ding.wav

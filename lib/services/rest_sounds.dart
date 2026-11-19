@@ -5,15 +5,20 @@ import 'package:flutter/foundation.dart';
 
 /// A workout audio cue.
 enum WorkoutCue {
-  /// Five seconds of rest left: one short, quiet warning tick.
-  fiveSeconds('sounds/rest_tick.wav'),
+  /// One second of rest left, played for each of the final five seconds: a
+  /// short, quiet countdown tick.
+  countdownTick('sounds/rest_tick.wav'),
 
   /// Rest over: a rising two-note "go" tone, clearly brighter than the tick.
   go('sounds/rest_go.wav'),
 
   /// A set just became a personal record: a short three-note fanfare, higher
   /// and longer than the rest cues so it cannot be mistaken for one.
-  personalRecord('sounds/pr_fanfare.wav');
+  personalRecord('sounds/pr_fanfare.wav'),
+
+  /// Summary walkthrough: one bright bell per personal record as the summary
+  /// scrolls to and highlights it.
+  prDing('sounds/pr_ding.wav');
 
   const WorkoutCue(this.asset);
 

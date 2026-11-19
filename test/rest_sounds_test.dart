@@ -61,7 +61,7 @@ class _StubHealthSource implements HealthSource {
 }
 
 /// Workout audio cues (owner request):
-///  * one quiet tick when 5 seconds of rest remain;
+///  * one quiet tick on each of the final five seconds of rest;
 ///  * a distinct "go" tone when the countdown reaches zero;
 ///  * a Settings mute switch that suppresses every workout cue;
 ///  * no cue after an early cancel, a restart or disposal.
@@ -200,7 +200,7 @@ void main() {
     await tester.pump();
   }
 
-  testWidgets('plays one tick at 5s left and one go tone at zero',
+  testWidgets('ticks once per second over the final five, then a go tone',
       (tester) async {
     await seed();
     final sounds = _FakeWorkoutSounds();
@@ -210,39 +210,42 @@ void main() {
     expect(find.text('0:07'), findsOneWidget,
         reason: 'completing a set starts the configured 7s rest');
 
-    // 7 -> 6: nothing yet.
+    // 7 -> 6: outside the countdown window, nothing yet.
     await tester.pump(const Duration(seconds: 1));
     expect(sounds.played, isEmpty);
-    // 6 -> 5: the warning tick.
-    await tester.pump(const Duration(seconds: 1));
-    expect(sounds.played, [WorkoutCue.fiveSeconds],
-        reason: 'exactly one tick at five seconds left');
-    expect(find.text('0:05'), findsOneWidget);
 
-    // 5 -> 4 -> 3 -> 2 -> 1: no further tick.
-    for (var i = 0; i < 4; i++) {
+    // 6 -> 5 -> 4 -> 3 -> 2 -> 1: one tick per second.
+    final ticks = <WorkoutCue>[
+      WorkoutCue.countdownTick,
+      WorkoutCue.countdownTick,
+      WorkoutCue.countdownTick,
+      WorkoutCue.countdownTick,
+      WorkoutCue.countdownTick,
+    ];
+    for (var i = 0; i < 5; i++) {
       await tester.pump(const Duration(seconds: 1));
+      expect(sounds.played, ticks.take(i + 1).toList(),
+          reason: 'each of 5, 4, 3, 2, 1 gets exactly one tick');
     }
-    expect(sounds.played, [WorkoutCue.fiveSeconds],
-        reason: 'the tick must fire once, not on every tick below five');
+    expect(find.text('0:01'), findsOneWidget);
 
     // 1 -> 0: the go tone.
     await tester.pump(const Duration(seconds: 1));
-    expect(sounds.played, [WorkoutCue.fiveSeconds, WorkoutCue.go],
+    expect(sounds.played, [...ticks, WorkoutCue.go],
         reason: 'one go tone when the countdown reaches zero');
     expect(find.text('0:00'), findsNothing,
         reason: 'the rest chip disappears at zero');
 
     // Nothing more after the timer stopped.
     await tester.pump(const Duration(seconds: 5));
-    expect(sounds.played, [WorkoutCue.fiveSeconds, WorkoutCue.go]);
+    expect(sounds.played, [...ticks, WorkoutCue.go]);
   });
 
-  testWidgets('a 5s rest ticks at five seconds left, not at four',
+  testWidgets('a 5s rest ticks at five seconds left, down to one',
       (tester) async {
     // 5s is the minimum the Settings slider can store; the countdown starts
-    // inside the warning window, so the cue must fire immediately rather than
-    // one tick later at 4s remaining.
+    // inside the warning window, so the first cue must fire immediately rather
+    // than one tick later at 4s remaining.
     await seed(restSeconds: 5);
     final sounds = _FakeWorkoutSounds();
     await pumpWorkout(tester, sounds);
@@ -250,23 +253,25 @@ void main() {
     await completeSet(tester);
     expect(find.text('0:05'), findsOneWidget,
         reason: 'completing a set starts the configured 5s rest');
-    expect(sounds.played, [WorkoutCue.fiveSeconds],
-        reason: 'the warning cue fires at five seconds remaining');
+    expect(sounds.played, [WorkoutCue.countdownTick],
+        reason: 'the first tick fires at five seconds remaining');
 
-    // 5 -> 4 -> 3 -> 2 -> 1: no repeat.
+    // 5 -> 4 -> 3 -> 2 -> 1: one tick per second.
     for (var i = 0; i < 4; i++) {
       await tester.pump(const Duration(seconds: 1));
     }
-    expect(sounds.played, [WorkoutCue.fiveSeconds],
-        reason: 'the tick must fire once, not on every tick below five');
+    expect(sounds.played, List.filled(5, WorkoutCue.countdownTick),
+        reason: 'one tick for each of 5, 4, 3, 2 and 1');
 
     // 1 -> 0: the go tone, and nothing else at zero.
     await tester.pump(const Duration(seconds: 1));
-    expect(sounds.played, [WorkoutCue.fiveSeconds, WorkoutCue.go],
+    expect(sounds.played,
+        [...List.filled(5, WorkoutCue.countdownTick), WorkoutCue.go],
         reason: 'only the go tone fires when the countdown reaches zero');
 
     await tester.pump(const Duration(seconds: 5));
-    expect(sounds.played, [WorkoutCue.fiveSeconds, WorkoutCue.go]);
+    expect(sounds.played,
+        [...List.filled(5, WorkoutCue.countdownTick), WorkoutCue.go]);
   });
 
   testWidgets('the mute setting suppresses both cues', (tester) async {
@@ -293,7 +298,7 @@ void main() {
     await completeSet(tester);
     await tester.pump(const Duration(seconds: 1));
     await tester.pump(const Duration(seconds: 1));
-    expect(sounds.played, [WorkoutCue.fiveSeconds]);
+    expect(sounds.played, [WorkoutCue.countdownTick]);
 
     // Tap the rest chip to cancel.
     await tester.tap(find.byType(ActionChip));
@@ -302,7 +307,7 @@ void main() {
         reason: 'the chip disappears when the rest is cancelled');
 
     await tester.pump(const Duration(seconds: 10));
-    expect(sounds.played, [WorkoutCue.fiveSeconds],
+    expect(sounds.played, [WorkoutCue.countdownTick],
         reason: 'a cancelled rest must never fire the go tone');
   });
 
@@ -319,11 +324,13 @@ void main() {
     expect(find.text('0:07'), findsOneWidget);
 
     // The first timer would have reached zero at t=7s; the restarted one
-    // reaches zero at t=7s from the restart. Exactly one tick and one go.
+    // reaches zero at t=7s from the restart. Exactly five ticks and one go,
+    // with nothing from the abandoned timer.
     for (var i = 0; i < 7; i++) {
       await tester.pump(const Duration(seconds: 1));
     }
-    expect(sounds.played, [WorkoutCue.fiveSeconds, WorkoutCue.go],
+    expect(sounds.played,
+        [...List.filled(5, WorkoutCue.countdownTick), WorkoutCue.go],
         reason: 'the abandoned timer must not fire its own cues');
   });
 

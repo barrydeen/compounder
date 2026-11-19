@@ -192,25 +192,31 @@ class Volume {
   const Volume(this.totalKg, this.sets, this.reps);
 }
 
-/// Volume, working-set count and rep total for [sets].
+/// Volume, set count and rep total for [sets].
 ///
 /// A set with `reps < 1` is skipped entirely: it contributes no volume, no
-/// reps, and is **not counted as a working set**. A zero-rep set is a
-/// placeholder the user completed without logging reps, so counting it would
-/// inflate "Working sets" (lib/ui/summary.dart) and "Sets · reps"
-/// (lib/ui/workout.dart) with work that was never done. Warm-up sets are
-/// excluded the same way. Pinned by test/coach_addset_clamp_test.dart
+/// reps, and is **not counted as a set**. A zero-rep set is a placeholder the
+/// user completed without logging reps, so counting it would inflate "Sets"
+/// (lib/ui/summary.dart) and "Sets · reps" (lib/ui/workout.dart) with work
+/// that was never done. Pinned by test/coach_addset_clamp_test.dart
 /// (review b2b3b4m1 MINOR-1).
+///
+/// Warm-up sets are excluded by default because a warm-up is not working-set
+/// volume for coaching and progress purposes. The session totals pass
+/// [includeWarmups] so the work-up sets the user actually logged still count
+/// toward "Total volume", "Sets" and "Total reps"; PR detection never looks at
+/// an included warm-up anyway (see [assessPr]).
 ///
 /// A negative weight is clamped to zero rather than skipped: the set still
 /// happened, so it counts, but it cannot subtract from the total. Neither
 /// shape is reachable through the UI (it clamps at workout.dart) or the coach
 /// tool (it clamps at AddSetTool), but the store accepts any value, so guard
 /// here too (review F4 on c3d71cd).
-Volume volumeOf(Iterable<({double weightKg, int reps, bool isWarmup})> sets) {
+Volume volumeOf(Iterable<({double weightKg, int reps, bool isWarmup})> sets,
+    {bool includeWarmups = false}) {
   var total = 0.0, n = 0, reps = 0;
   for (final s in sets) {
-    if (s.isWarmup) continue;
+    if (s.isWarmup && !includeWarmups) continue;
     if (s.reps < 1) continue;
     final weightKg = s.weightKg < 0 ? 0.0 : s.weightKg;
     total += weightKg * s.reps;

@@ -38,11 +38,17 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
   final ValueNotifier<int> _restLeft = ValueNotifier(0);
   Timer? _restTimer;
 
+  /// The workout-exercise whose sets are open. Only one card is open at a time
+  /// (owner request): the screen exists to log one exercise at a time, and two
+  /// open cards just push the next exercise off-screen. The first exercise
+  /// opens by default; tapping a header opens it and closes the rest.
+  int? _expandedEntryId;
+  bool _expandedInitialized = false;
+
   /// Bumped whenever the rest timer starts, is cancelled or the screen is
   /// disposed. A tick whose generation no longer matches is stale and must not
   /// fire a cue.
   int _restGeneration = 0;
-  bool _restTickPlayed = false;
 
   late final WorkoutSounds _sounds;
 
@@ -79,19 +85,46 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
     final detail = await _store!.workoutDetail(widget.workoutId);
     if (!mounted) return;
     setState(() {
-      _detail = detail;
       _loading = false;
-      _syncControllers();
+      _applyDetail(detail);
     });
   }
 
-  Future<void> _reloadDetail() async {
+  Future<void> _reloadDetail({int? expandEntryId}) async {
     final detail = await _store!.workoutDetail(widget.workoutId);
     if (!mounted) return;
-    setState(() {
-      _detail = detail;
-      _syncControllers();
-    });
+    setState(() => _applyDetail(detail, expandEntryId: expandEntryId));
+  }
+
+  /// Installs [detail] and keeps the open card sensible across reloads: a
+  /// deleted exercise (or the first load) opens the first remaining card, and
+  /// a newly added exercise is opened explicitly by [expandEntryId].
+  void _applyDetail(WorkoutDetail? detail, {int? expandEntryId}) {
+    _detail = detail;
+    final views = detail?.exercises ?? const <ExerciseView>[];
+    final ids = views.map((v) => v.entry.id).toSet();
+    final keepRequested = expandEntryId != null && ids.contains(expandEntryId);
+    if (keepRequested) {
+      _expandedEntryId = expandEntryId;
+    } else if (!_expandedInitialized ||
+        (_expandedEntryId != null && !ids.contains(_expandedEntryId))) {
+      _expandedEntryId = views.isEmpty ? null : views.first.entry.id;
+    }
+    _expandedInitialized = true;
+    _syncControllers();
+  }
+
+  /// Opens [entryId] and closes whichever card was open. Closing flushes any
+  /// half-typed values first: the rows are about to leave the tree and the
+  /// user expects what they typed to be saved.
+  Future<void> _toggleExercise(ExerciseView view) async {
+    if (_expandedEntryId == view.entry.id) {
+      await _persistPendingUpdates(_pendingUpdates());
+      if (!mounted) return;
+      setState(() => _expandedEntryId = null);
+      return;
+    }
+    setState(() => _expandedEntryId = view.entry.id);
   }
 
   void _syncControllers() {
@@ -203,16 +236,15 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
     final seconds = _store!.restSeconds;
     _restTimer?.cancel();
     _restGeneration++;
-    _restTickPlayed = false;
     _restLeft.value = seconds;
     final generation = _restGeneration;
-    // The warning cue belongs at five seconds remaining. A rest configured at
-    // or below that (the Settings minimum is 5s) starts already inside the
-    // window, so fire it now: waiting for the first timer tick would place it
-    // at 4s remaining, one second late.
+    // One tick for every second of the final countdown (5, 4, 3, 2, 1), then
+    // the distinct go tone at zero. A rest configured at or below five seconds
+    // (the Settings minimum is 5s) starts inside the countdown window, so its
+    // first tick fires now: waiting for the first timer tick would place it at
+    // 4s remaining, one second late.
     if (seconds > 0 && seconds <= 5) {
-      _restTickPlayed = true;
-      _playCue(WorkoutCue.fiveSeconds);
+      _playCue(WorkoutCue.countdownTick);
     }
     _restTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
       if (!mounted || generation != _restGeneration) {
@@ -221,13 +253,11 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
       }
       final next = _restLeft.value - 1;
       _restLeft.value = next < 0 ? 0 : next;
-      if (next > 0 && next <= 5 && !_restTickPlayed) {
-        _restTickPlayed = true;
-        _playCue(WorkoutCue.fiveSeconds);
-      }
       if (next <= 0) {
         timer.cancel();
         _playCue(WorkoutCue.go);
+      } else if (next <= 5) {
+        _playCue(WorkoutCue.countdownTick);
       }
     });
   }
@@ -492,11 +522,15 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
       return const Scaffold(body: Center(child: Text('Workout not found')));
     }
 
-    final volume = volumeOf(detail.exercises
-        .expand((e) => e.sets)
-        .where((s) => s.completedAt != null)
-        .map(
-            (s) => (weightKg: s.weightKg, reps: s.reps, isWarmup: s.isWarmup)));
+    final volume = volumeOf(
+        detail.exercises
+            .expand((e) => e.sets)
+            .where((s) => s.completedAt != null)
+            .map((s) =>
+                (weightKg: s.weightKg, reps: s.reps, isWarmup: s.isWarmup)),
+        // Warm-up ("work-up") sets count toward the session total; only PR
+        // detection ignores them.
+        includeWarmups: true);
 
     return PopScope(
       canPop: true,
@@ -528,7 +562,8 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
                   await store.finishWorkout(widget.workoutId);
                   if (!context.mounted) return;
                   Navigator.of(context).pushReplacement(MaterialPageRoute(
-                      builder: (_) => SummaryScreen(widget.workoutId)));
+                      builder: (_) =>
+                          SummaryScreen(widget.workoutId, celebrate: true)));
                 },
                 child: Text('Finish',
                     style: TextStyle(
@@ -551,14 +586,29 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
                       value: '${volume.sets} · ${volume.reps}')),
             ]),
             const SizedBox(height: 16),
+            if (detail.exercises.isEmpty)
+              const EmptyState(
+                title: 'Empty workout',
+                subtitle: 'Add your first exercise to start logging sets.',
+                icon: Icons.add_chart,
+              ),
+            ...detail.exercises.map((view) => Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: _exerciseCard(store, scheme, t, view),
+                )),
+            const SizedBox(height: 4),
+            // The add button lives under the last exercise card (owner
+            // request): it is the natural "what next" position once the sets
+            // in front of the user are filled in.
             OutlinedButton.icon(
               onPressed: () async {
                 final exerciseId = await Navigator.of(context).push<int>(
                     MaterialPageRoute(
                         builder: (_) => const ExercisePickerScreen()));
                 if (exerciseId == null) return;
+                final int entryId;
                 try {
-                  await _store!.addExerciseToWorkout(
+                  entryId = await _store!.addExerciseToWorkout(
                       widget.workoutId, exerciseId,
                       seedDefaultSet: true);
                 } on StoreException catch (e) {
@@ -568,72 +618,102 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
                   }
                   return;
                 }
-                await _reloadDetail();
+                await _reloadDetail(expandEntryId: entryId);
               },
               icon: const Icon(Icons.add, size: 18),
               label: const Text('Add exercise'),
             ),
-            const SizedBox(height: 16),
-            if (detail.exercises.isEmpty)
-              const EmptyState(
-                title: 'Empty workout',
-                subtitle: 'Add your first exercise to start logging sets.',
-                icon: Icons.add_chart,
-              ),
-            ...detail.exercises.map((view) => Padding(
-                  padding: const EdgeInsets.only(bottom: 16),
-                  child: Card(
-                    color: scheme.surfaceContainerLow,
-                    child: Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(children: [
-                            Expanded(
-                              child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(view.exercise.name,
-                                        style: t.titleMedium),
-                                    Text(view.exercise.muscleGroup,
-                                        style: t.bodySmall?.copyWith(
-                                            color: scheme.onSurfaceVariant)),
-                                  ]),
-                            ),
-                            IconButton(
-                              icon: Icon(Icons.delete_outline,
-                                  color: scheme.outline),
-                              tooltip: 'Remove exercise',
-                              onPressed: () async {
-                                await _persistPendingUpdates(_pendingUpdates());
-                                await _store!.removeExercise(view.entry.id);
-                                await _reloadDetail();
-                              },
-                            ),
-                          ]),
-                          const SizedBox(height: 4),
-                          _setHeader(scheme, t, store.unit.label),
-                          ...view.sets.asMap().entries.map((entry) => _setRow(
-                              context,
-                              scheme,
-                              t,
-                              view,
-                              entry.key,
-                              entry.value)),
-                          TextButton.icon(
-                            onPressed: () => _addSet(view),
-                            icon: const Icon(Icons.add, size: 18),
-                            label: const Text('Add set'),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                )),
           ],
         ),
       ),
+    );
+  }
+
+  /// One exercise card: a tappable header that opens or closes the set table.
+  /// Only one card is open at a time, so opening this one is all it takes.
+  Widget _exerciseCard(
+      AppStore store, ColorScheme scheme, TextTheme t, ExerciseView view) {
+    final expanded = _expandedEntryId == view.entry.id;
+    final summary = volumeOf(
+        view.sets
+            .where((s) => s.completedAt != null)
+            .map((s) =>
+                (weightKg: s.weightKg, reps: s.reps, isWarmup: s.isWarmup))
+            .toList(),
+        includeWarmups: true);
+    return Card(
+      color: scheme.surfaceContainerLow,
+      clipBehavior: Clip.antiAlias,
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(8, 4, 4, 4),
+          child: Row(children: [
+            Expanded(
+              child: Semantics(
+                container: true,
+                button: true,
+                toggled: expanded,
+                label: '${expanded ? 'Collapse' : 'Expand'} sets for '
+                    '${view.exercise.name}',
+                onTap: () => _toggleExercise(view),
+                child: ExcludeSemantics(
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(8),
+                    onTap: () => _toggleExercise(view),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 8),
+                      child: Row(children: [
+                        Expanded(
+                          child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(view.exercise.name, style: t.titleMedium),
+                                Text(
+                                    '${view.exercise.muscleGroup} · '
+                                    '${summary.sets} sets · '
+                                    '${summary.reps} reps',
+                                    style: t.bodySmall?.copyWith(
+                                        color: scheme.onSurfaceVariant)),
+                              ]),
+                        ),
+                        Icon(expanded ? Icons.expand_less : Icons.expand_more,
+                            color: scheme.primary),
+                      ]),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            IconButton(
+              icon: Icon(Icons.delete_outline, color: scheme.outline),
+              tooltip: 'Remove exercise',
+              onPressed: () async {
+                await _persistPendingUpdates(_pendingUpdates());
+                await _store!.removeExercise(view.entry.id);
+                await _reloadDetail();
+              },
+            ),
+          ]),
+        ),
+        if (expanded)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _setHeader(scheme, t, store.unit.label),
+                ...view.sets.asMap().entries.map((entry) =>
+                    _setRow(context, scheme, t, view, entry.key, entry.value)),
+                TextButton.icon(
+                  onPressed: () => _addSet(view),
+                  icon: const Icon(Icons.add, size: 18),
+                  label: const Text('Add set'),
+                ),
+              ],
+            ),
+          ),
+      ]),
     );
   }
 }

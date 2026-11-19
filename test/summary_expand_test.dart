@@ -128,13 +128,22 @@ void main() {
     expect(find.text('60 kg × 8 reps'), findsNothing);
     expect(find.text('Warm-up'), findsNothing);
 
-    // The aggregate row and the totals are unchanged by this feature.
-    expect(find.text('Legs · 1 sets · 5 reps'), findsOneWidget);
+    // The aggregate row now counts the completed warm-up set too.
+    expect(find.text('Legs · 2 sets · 13 reps'), findsOneWidget);
     expect(find.text('Total volume (kg)'), findsOneWidget);
     expect(find.text('Best e1RM (kg)'), findsOneWidget);
-    expect(find.text('Working sets'), findsOneWidget);
+    expect(find.text('Sets'), findsOneWidget);
     expect(find.text('Total reps'), findsOneWidget);
     expect(find.text('Delete workout'), findsOneWidget);
+
+    // Warm-up ("work-up") sets count toward the session totals (owner
+    // request): 100x5 + 60x8 warm-up + 80x5 = 1380 kg over 3 sets and 18 reps.
+    // Only PR detection ignores warm-ups.
+    StatCard card(String label) => tester.widget<StatCard>(
+        find.byWidgetPredicate((w) => w is StatCard && w.label == label));
+    expect(card('Total volume (kg)').value, '1380');
+    expect(card('Sets').value, '3');
+    expect(card('Total reps').value, '18');
 
     // The expand control names the exercise and its state.
     final expand = find.bySemanticsLabel('Expand sets for Back squat');

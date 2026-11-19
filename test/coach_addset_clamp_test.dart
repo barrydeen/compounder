@@ -114,7 +114,7 @@ void main() {
       StatCard card(String label) => tester.widget<StatCard>(
           find.byWidgetPredicate((w) => w is StatCard && w.label == label));
       expect(card('Total reps').value, '5');
-      expect(card('Working sets').value, '1');
+      expect(card('Sets').value, '1');
       expect(card('Best e1RM (kg)').value, '0',
           reason: 'a 0 kg set has no e1RM signal');
       expect(card('Total volume (kg)').value, '0');
@@ -126,6 +126,24 @@ void main() {
       expect(e1rmMaxOf([(-20, 5)]), 0);
       expect(e1rmMaxOf([(-20, 5), (80, 5)]), closeTo(93.33, 0.01),
           reason: 'the valid set must still be scored');
+    });
+
+    test('volumeOf counts warm-ups only when asked', () {
+      final sets = [
+        (weightKg: 100.0, reps: 5, isWarmup: false),
+        (weightKg: 40.0, reps: 10, isWarmup: true),
+      ];
+      final working = volumeOf(sets);
+      expect(working.totalKg, 500.0,
+          reason: 'coaching and progress volume excludes warm-ups');
+      expect(working.sets, 1);
+      expect(working.reps, 5);
+
+      final all = volumeOf(sets, includeWarmups: true);
+      expect(all.totalKg, 900.0,
+          reason: 'session totals include the warm-up work (owner request)');
+      expect(all.sets, 2);
+      expect(all.reps, 15);
     });
 
     test('volumeOf skips negative reps and negative weights', () {

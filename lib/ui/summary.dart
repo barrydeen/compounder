@@ -1,20 +1,37 @@
+import 'dart:async';
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../data/models.dart';
 import '../data/store.dart';
 import '../domain/domain.dart';
+import '../services/rest_sounds.dart';
 import 'widgets.dart';
 
 class SummaryScreen extends StatefulWidget {
   final int workoutId;
-  const SummaryScreen(this.workoutId, {super.key});
+
+  /// Celebrate the session: a one-shot confetti burst, then a walkthrough that
+  /// scrolls to each personal record, highlights it and dings it. Only the
+  /// finish-workout path sets this — browsing an old session from history
+  /// stays quiet.
+  final bool celebrate;
+
+  /// Injectable cue player; tests pass a fake. Defaults to the real
+  /// audioplayers-backed implementation.
+  final WorkoutSounds? sounds;
+
+  const SummaryScreen(this.workoutId,
+      {super.key, this.celebrate = false, this.sounds});
 
   @override
   State<SummaryScreen> createState() => _SummaryScreenState();
 }
 
-class _SummaryScreenState extends State<SummaryScreen> {
+class _SummaryScreenState extends State<SummaryScreen>
+    with SingleTickerProviderStateMixin {
   /// The detail future is created once so a rebuild (the store notifying, a
   /// theme change, an expansion toggle) never re-queries the database and
   /// never drops the loaded workout back to a loading state.
@@ -29,9 +46,30 @@ class _SummaryScreenState extends State<SummaryScreen> {
   /// another. Collapsed by default: the owner asked to expand "if I want".
   final Set<int> _expanded = <int>{};
 
+  late final WorkoutSounds _sounds;
+
+  /// Drives the one-shot confetti burst. Runs once and stops: a screen that
+  /// keeps ticking is both wasteful and a `pumpAndSettle` trap in tests.
+  late final AnimationController _confetti;
+
+  /// Global keys for the PR cards, so the walkthrough can scroll to each one.
+  final List<GlobalKey> _prKeys = <GlobalKey>[];
+
+  /// The PR card the walkthrough is currently highlighting, or null.
+  int? _activePr;
+
+  /// Guards the walkthrough so a rebuild (a store notification, an expansion
+  /// toggle) never restarts the celebration.
+  bool _prWalkStarted = false;
+  bool _prWalkCancelled = false;
+  Timer? _prStep;
+
   @override
   void initState() {
     super.initState();
+    _sounds = widget.sounds ?? AudioWorkoutSounds();
+    _confetti = AnimationController(
+        vsync: this, duration: const Duration(milliseconds: 2600));
     final store = context.read<AppStore>();
     _detail = store.workoutDetail(widget.workoutId);
     _prs = store.prSummary(widget.workoutId);
@@ -39,6 +77,21 @@ class _SummaryScreenState extends State<SummaryScreen> {
     // subscribes once the workout detail has loaded, so a query that fails
     // faster than that would otherwise surface as an unhandled async error.
     _prs.then<void>((_) {}, onError: (Object _) {});
+    if (widget.celebrate) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        if (MediaQuery.maybeDisableAnimationsOf(context) ?? false) return;
+        _confetti.forward(from: 0);
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _prStep?.cancel();
+    _confetti.dispose();
+    unawaited(_sounds.dispose());
+    super.dispose();
   }
 
   void _toggle(int workoutExerciseId) {
@@ -47,6 +100,71 @@ class _SummaryScreenState extends State<SummaryScreen> {
         _expanded.add(workoutExerciseId);
       }
     });
+  }
+
+  /// Starts the PR walkthrough once per session: the confetti is already
+  /// running, so now walk the record cards top to bottom, highlighting and
+  /// dinging each one.
+  void _schedulePrWalk(int count) {
+    if (!widget.celebrate || _prWalkStarted || count == 0) return;
+    _prWalkStarted = true;
+    final store = context.read<AppStore>();
+    final reduced = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
+    final withSound = store.restSoundsEnabled;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (withSound) unawaited(_sounds.play(WorkoutCue.personalRecord));
+      // Let the fanfare land before the first card lights up.
+      _prStep = Timer(const Duration(milliseconds: 700), () {
+        if (!mounted) return;
+        _advancePrWalk(0, count, reduced: reduced, withSound: withSound);
+      });
+    });
+  }
+
+  void _advancePrWalk(int index, int count,
+      {required bool reduced, required bool withSound}) {
+    if (!mounted || _prWalkCancelled) return;
+    if (index >= count) {
+      setState(() => _activePr = null);
+      return;
+    }
+    setState(() => _activePr = index);
+    if (withSound) unawaited(_sounds.play(WorkoutCue.prDing));
+    if (!reduced && index < _prKeys.length) {
+      final target = _prKeys[index].currentContext;
+      if (target != null) {
+        unawaited(Scrollable.ensureVisible(target,
+            duration: const Duration(milliseconds: 420),
+            curve: Curves.easeInOut,
+            alignment: 0.4));
+      }
+    }
+    _prStep = Timer(const Duration(milliseconds: 1500), () {
+      _advancePrWalk(index + 1, count, reduced: reduced, withSound: withSound);
+    });
+  }
+
+  /// A manual scroll hands control back to the user: the walkthrough stops
+  /// rather than fighting their finger.
+  bool _onScroll(ScrollNotification notification) {
+    if (notification is ScrollStartNotification &&
+        notification.dragDetails != null) {
+      _prStep?.cancel();
+      _prWalkCancelled = true;
+      if (_activePr != null && mounted) {
+        setState(() => _activePr = null);
+      }
+    }
+    return false;
+  }
+
+  /// Makes sure every PR card has a stable GlobalKey for the walkthrough. Safe
+  /// during build: keys are plain objects, nothing notifies.
+  void _ensurePrKeys(int count) {
+    while (_prKeys.length < count) {
+      _prKeys.add(GlobalKey());
+    }
   }
 
   @override
@@ -90,56 +208,73 @@ class _SummaryScreenState extends State<SummaryScreen> {
             .where((s) => !s.isWarmup && s.reps >= 1)
             .map((s) => (s.weightKg, s.reps))
             .toList();
-        final volume = volumeOf(allSets);
+        // Warm-up ("work-up") sets count toward the session totals — the work
+        // was performed — but PR detection still ignores them (assessPr).
+        final volume = volumeOf(allSets, includeWarmups: true);
         final bestE1rm = working.isEmpty ? 0.0 : formatE1rm(e1rmMaxOf(working));
 
         return Scaffold(
           appBar: AppBar(title: Text('${detail.workout.name} · summary')),
-          body: ListView(
-            padding: const EdgeInsets.all(20),
-            children: [
-              Text(
-                '${formatDateTime(detail.workout.startedAt)} · ${formatDuration(detail.workout.startedAt, detail.workout.endedAt)}',
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: Theme.of(context).colorScheme.onSurfaceVariant),
+          body: NotificationListener<ScrollNotification>(
+            onNotification: _onScroll,
+            child: Stack(children: [
+              ListView(
+                padding: const EdgeInsets.all(20),
+                children: [
+                  Text(
+                    '${formatDateTime(detail.workout.startedAt)} · ${formatDuration(detail.workout.startedAt, detail.workout.endedAt)}',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant),
+                  ),
+                  const SizedBox(height: 12),
+                  Row(children: [
+                    Expanded(
+                        child: StatCard(
+                            label: 'Total volume (${store.unit.label})',
+                            value:
+                                trimZero(fromKg(volume.totalKg, store.unit)))),
+                    const SizedBox(width: 8),
+                    Expanded(
+                        child: StatCard(
+                            label: 'Best e1RM (kg)',
+                            value: trimZero(bestE1rm))),
+                  ]),
+                  const SizedBox(height: 8),
+                  Row(children: [
+                    Expanded(
+                        child:
+                            StatCard(label: 'Sets', value: '${volume.sets}')),
+                    const SizedBox(width: 8),
+                    Expanded(
+                        child: StatCard(
+                            label: 'Total reps', value: '${volume.reps}')),
+                  ]),
+                  const SizedBox(height: 16),
+                  _prSection(store),
+                  const SectionHeader('Exercises'),
+                  ...detail.exercises.map((view) => _exerciseCard(store, view)),
+                  const SizedBox(height: 16),
+                  OutlinedButton.icon(
+                    style:
+                        OutlinedButton.styleFrom(foregroundColor: scheme.error),
+                    icon: Icon(Icons.delete_outline, color: scheme.error),
+                    label: Text('Delete workout',
+                        style: TextStyle(color: scheme.error)),
+                    onPressed: () async {
+                      await store.deleteWorkout(widget.workoutId);
+                      if (context.mounted) Navigator.of(context).pop();
+                    },
+                  ),
+                ],
               ),
-              const SizedBox(height: 12),
-              Row(children: [
-                Expanded(
-                    child: StatCard(
-                        label: 'Total volume (${store.unit.label})',
-                        value: trimZero(fromKg(volume.totalKg, store.unit)))),
-                const SizedBox(width: 8),
-                Expanded(
-                    child: StatCard(
-                        label: 'Best e1RM (kg)', value: trimZero(bestE1rm))),
-              ]),
-              const SizedBox(height: 8),
-              Row(children: [
-                Expanded(
-                    child: StatCard(
-                        label: 'Working sets', value: '${volume.sets}')),
-                const SizedBox(width: 8),
-                Expanded(
-                    child:
-                        StatCard(label: 'Total reps', value: '${volume.reps}')),
-              ]),
-              const SizedBox(height: 16),
-              _prSection(store),
-              const SectionHeader('Exercises'),
-              ...detail.exercises.map((view) => _exerciseCard(store, view)),
-              const SizedBox(height: 16),
-              OutlinedButton.icon(
-                style: OutlinedButton.styleFrom(foregroundColor: scheme.error),
-                icon: Icon(Icons.delete_outline, color: scheme.error),
-                label: Text('Delete workout',
-                    style: TextStyle(color: scheme.error)),
-                onPressed: () async {
-                  await store.deleteWorkout(widget.workoutId);
-                  if (context.mounted) Navigator.of(context).pop();
-                },
-              ),
-            ],
+              if (widget.celebrate)
+                Positioned.fill(
+                  child: IgnorePointer(
+                      child: _ConfettiBurst(
+                          key: const ValueKey('summary-confetti'),
+                          progress: _confetti)),
+                ),
+            ]),
           ),
         );
       },
@@ -175,28 +310,72 @@ class _SummaryScreenState extends State<SummaryScreen> {
         }
         final prs = snap.data ?? const <PrSummary>[];
         if (prs.isEmpty) return const SizedBox.shrink();
+        _ensurePrKeys(prs.length);
+        _schedulePrWalk(prs.length);
         return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           const SectionHeader('Personal records'),
           const SizedBox(height: 8),
-          for (final pr in prs)
-            Card(
-              color: scheme.tertiaryContainer,
-              child: ListTile(
-                leading:
-                    Icon(Icons.emoji_events, color: scheme.onTertiaryContainer),
-                title: Text(pr.exerciseName,
-                    style: t.titleMedium
-                        ?.copyWith(color: scheme.onTertiaryContainer)),
-                subtitle: Text(_prDetail(pr, store.unit),
-                    style: t.bodySmall
-                        ?.copyWith(color: scheme.onTertiaryContainer)),
-              ),
-            ),
+          for (var i = 0; i < prs.length; i++) _prCard(i, prs[i], store),
           const SizedBox(height: 16),
         ]);
       },
     );
   }
+
+  /// One personal-record card. The walkthrough makes the active card pop: it
+  /// scales up, its trophy grows, a glow spreads behind it and a sparkle marks
+  /// it while its ding plays.
+  Widget _prCard(int index, PrSummary pr, AppStore store) {
+    final scheme = Theme.of(context).colorScheme;
+    final t = Theme.of(context).textTheme;
+    final active = _activePr == index;
+    const duration = Duration(milliseconds: 260);
+    return AnimatedScale(
+      key: _ensureKeyAt(index),
+      scale: active ? 1.03 : 1,
+      duration: duration,
+      curve: Curves.easeOutBack,
+      child: AnimatedContainer(
+        duration: duration,
+        margin: const EdgeInsets.only(bottom: 8),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(12),
+          boxShadow: active
+              ? [
+                  BoxShadow(
+                      color: scheme.tertiary.withValues(alpha: 0.55),
+                      blurRadius: 24,
+                      spreadRadius: 3),
+                ]
+              : const [],
+        ),
+        child: Card(
+          margin: EdgeInsets.zero,
+          color: scheme.tertiaryContainer,
+          child: ListTile(
+            leading: AnimatedScale(
+              scale: active ? 1.3 : 1,
+              duration: duration,
+              curve: Curves.easeOutBack,
+              child:
+                  Icon(Icons.emoji_events, color: scheme.onTertiaryContainer),
+            ),
+            title: Text(pr.exerciseName,
+                style:
+                    t.titleMedium?.copyWith(color: scheme.onTertiaryContainer)),
+            subtitle: Text(_prDetail(pr, store.unit),
+                style:
+                    t.bodySmall?.copyWith(color: scheme.onTertiaryContainer)),
+            trailing: active
+                ? Icon(Icons.auto_awesome, color: scheme.onTertiaryContainer)
+                : null,
+          ),
+        ),
+      ),
+    );
+  }
+
+  GlobalKey _ensureKeyAt(int index) => _prKeys[index];
 
   String _prDetail(PrSummary pr, WeightUnit unit) {
     if (pr.isRepBased) {
@@ -224,10 +403,13 @@ class _SummaryScreenState extends State<SummaryScreen> {
   Widget _exerciseCard(AppStore store, ExerciseView view) {
     final scheme = Theme.of(context).colorScheme;
     final t = Theme.of(context).textTheme;
-    final v = volumeOf(view.sets
-        .where((s) => s.completedAt != null)
-        .map((s) => (weightKg: s.weightKg, reps: s.reps, isWarmup: s.isWarmup))
-        .toList());
+    final v = volumeOf(
+        view.sets
+            .where((s) => s.completedAt != null)
+            .map((s) =>
+                (weightKg: s.weightKg, reps: s.reps, isWarmup: s.isWarmup))
+            .toList(),
+        includeWarmups: true);
     final expanded = _expanded.contains(view.entry.id);
     final sets = [...view.sets]
       ..sort((a, b) => a.position.compareTo(b.position));
@@ -364,4 +546,124 @@ class _SummaryScreenState extends State<SummaryScreen> {
       ),
     );
   }
+}
+
+/// One-shot falling-confetti overlay: a celebration frame over the summary that
+/// never intercepts input and paints nothing once the animation finishes.
+class _ConfettiBurst extends StatelessWidget {
+  final Animation<double> progress;
+
+  const _ConfettiBurst({super.key, required this.progress});
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: progress,
+      builder: (context, _) {
+        if (progress.value >= 1) return const SizedBox.shrink();
+        return CustomPaint(
+          painter: _ConfettiPainter(progress.value),
+          size: Size.infinite,
+        );
+      },
+    );
+  }
+}
+
+class _ConfettiPainter extends CustomPainter {
+  final double t;
+  final List<_ConfettiPiece> _pieces;
+
+  _ConfettiPainter(this.t) : _pieces = _buildPieces();
+
+  /// Festive, high-contrast colours that read on both the light and dark
+  /// themes without depending on the palette.
+  static const _palette = [
+    Color(0xFFFFC107),
+    Color(0xFFFF4081),
+    Color(0xFF40C4FF),
+    Color(0xFF69F0AE),
+    Color(0xFFB388FF),
+    Color(0xFFFF6E40),
+  ];
+
+  /// Deterministic: a fixed seed keeps the burst identical run to run, so a
+  /// widget test can pump it without surprises.
+  static List<_ConfettiPiece> _buildPieces() {
+    final rng = math.Random(17);
+    return List.generate(70, (_) {
+      return _ConfettiPiece(
+        x: rng.nextDouble(),
+        delay: rng.nextDouble() * 0.25,
+        speed: 0.85 + rng.nextDouble() * 0.55,
+        sway: (rng.nextDouble() - 0.5) * 0.09,
+        size: 4 + rng.nextDouble() * 5,
+        spin: (rng.nextDouble() - 0.5) * 10,
+        phase: rng.nextDouble() * math.pi * 2,
+        color: _palette[rng.nextInt(_palette.length)],
+        round: rng.nextBool(),
+      );
+    });
+  }
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (size.isEmpty) return;
+    // Fade the whole burst out over its last fifth so it does not just vanish.
+    final fade = (1 - ((t - 0.82) / 0.18)).clamp(0.0, 1.0);
+    if (fade <= 0) return;
+    final paint = Paint();
+    for (final piece in _pieces) {
+      final local = ((t - piece.delay) / (1 - piece.delay)).clamp(0.0, 1.0);
+      if (local <= 0) continue;
+      // Gravity: the pieces accelerate as they fall.
+      final y =
+          -0.15 * size.height + local * local * piece.speed * size.height * 1.4;
+      if (y > size.height + 24) continue;
+      final x = size.width *
+          (piece.x + piece.sway * math.sin(local * 6 + piece.phase));
+      canvas.save();
+      canvas.translate(x, y);
+      canvas.rotate(piece.phase + local * piece.spin * math.pi);
+      paint.color = piece.color.withValues(alpha: fade);
+      if (piece.round) {
+        canvas.drawCircle(Offset.zero, piece.size / 2, paint);
+      } else {
+        canvas.drawRect(
+            Rect.fromCenter(
+                center: Offset.zero,
+                width: piece.size,
+                height: piece.size * 1.6),
+            paint);
+      }
+      canvas.restore();
+    }
+  }
+
+  @override
+  bool shouldRepaint(_ConfettiPainter oldDelegate) => oldDelegate.t != t;
+}
+
+class _ConfettiPiece {
+  final double x;
+  final double delay;
+  final double speed;
+  final double sway;
+  final double size;
+  final double spin;
+  final double phase;
+  final Color color;
+  final bool round;
+
+  const _ConfettiPiece({
+    required this.x,
+    required this.delay,
+    required this.speed,
+    required this.sway,
+    required this.size,
+    required this.spin,
+    required this.phase,
+    required this.color,
+    required this.round,
+  });
 }

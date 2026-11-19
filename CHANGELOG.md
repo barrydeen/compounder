@@ -33,6 +33,16 @@ Release candidate. Not yet tagged.
 - **Nutrition browsing by date** with a weekly macro/calorie tracker.
 - **Manual meal logging** and a macro-to-calorie calculator.
 - **Expand/collapse per-set detail** in past workout summaries.
+- **Workout summary celebration** — finishing a workout lands on a confetti
+  burst, then a walkthrough that scrolls to each personal record, highlights it
+  and dings it (a new `pr_ding.wav` cue after one fanfare). Opening an older
+  session from History stays quiet, the existing Workout sounds mute switch
+  silences the audio, and the animations are skipped when the platform asks for
+  reduced motion.
+- **Live workout cards** — the live workout screen opens one exercise card at a
+  time; tapping a header expands it and collapses the rest, adding an exercise
+  opens the new card, and the "Add exercise" button now sits below the last
+  card.
 - **Compounder AI subscription** — Play/StoreKit purchase, gateway verification,
   source routing, trialing and past-due grace states.
 - **Fitness tab and navigation split** — bottom bar Home/Fitness/Macros/Wealth/
@@ -40,6 +50,15 @@ Release candidate. Not yet tagged.
 
 ### Changed
 
+- Rest-timer cues tick once on each of the final five seconds (5, 4, 3, 2, 1)
+  instead of a single tick at five; the distinct "go" tone still plays at zero.
+- Warm-up ("work-up") sets now count toward the session's volume, sets and reps
+  totals in the live workout header and the summary (the summary's "Working
+  sets" stat is now "Sets"); personal-record detection still ignores them.
+- The local `make test` target runs a bounded number of test workers and keeps
+  `TMPDIR` off tmpfs: a bare `flutter test` sizes its worker pool to the core
+  count, and an interrupted run can leave orphaned test processes that make the
+  next run appear to hang.
 - Daily coach check-in: notifications are expandable in the shade (BigText), and
   the message names what is still open today — overdue training, protein gap,
   mood check-in, unfinished habits, remaining plan blocks and unchecked

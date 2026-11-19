@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate the two rest-timer cue WAVs bundled in assets/sounds/.
+"""Generate the workout cue WAVs bundled in assets/sounds/.
 
 Run from the package root:  python3 tool/gen_rest_sounds.py
 
@@ -70,6 +70,12 @@ def main():
     pr += silence(20)
     pr += tone(2093, 220, 0.34, attack_ms=3.0, release_ms=150.0)
     write_wav("pr_fanfare.wav", pr)
+    # Summary PR ding: one bright, short bell per personal record as the
+    # summary walkthrough highlights it. A quiet octave-up shimmer sits on top
+    # so it reads as a celebration chime rather than another timer tick.
+    ding = tone(2093, 420, 0.30, attack_ms=2.0, release_ms=380.0)
+    shimmer = tone(3136, 420, 0.12, attack_ms=2.0, release_ms=380.0)
+    write_wav("pr_ding.wav", [a + b for a, b in zip(ding, shimmer)])
 
 
 if __name__ == "__main__":
