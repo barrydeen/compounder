@@ -203,6 +203,21 @@ void main() {
         reason: 'the Add exercise button belongs under the latest card');
   });
 
+  testWidgets('the list clears the Android navigation bar at the bottom',
+      (tester) async {
+    await seed(secondExercise: false);
+    // Three-button navigation is ~72dp tall and, in edge-to-edge mode, is drawn
+    // over the app's body.
+    tester.view.padding = const FakeViewPadding(bottom: 72);
+    addTearDown(tester.view.resetPadding);
+    await pumpWorkout(tester);
+
+    final list = tester.widget<ListView>(find.byType(ListView));
+    expect((list.padding as EdgeInsets).bottom, 20 + 72,
+        reason: 'the Add exercise button must scroll above the system bar, '
+            'not sit underneath it');
+  });
+
   testWidgets('warm-up sets count toward the session volume and rep totals',
       (tester) async {
     SharedPreferences.setMockInitialValues({

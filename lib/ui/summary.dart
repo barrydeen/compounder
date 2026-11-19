@@ -219,7 +219,11 @@ class _SummaryScreenState extends State<SummaryScreen>
             onNotification: _onScroll,
             child: Stack(children: [
               ListView(
-                padding: const EdgeInsets.all(20),
+                // Keep the final button (Delete workout) clear of the Android
+                // system navigation bar drawn over the body in edge-to-edge
+                // mode.
+                padding: EdgeInsets.fromLTRB(
+                    20, 20, 20, 20 + MediaQuery.paddingOf(context).bottom),
                 children: [
                   Text(
                     '${formatDateTime(detail.workout.startedAt)} · ${formatDuration(detail.workout.startedAt, detail.workout.endedAt)}',

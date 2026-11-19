@@ -83,6 +83,9 @@ Release candidate. Not yet tagged.
 
 ### Fixed
 
+- Live workout and workout summary: the last control in the list (Add exercise /
+  Delete workout) no longer sits under the Android system navigation bar; the
+  list adds the bottom safe-area inset to its padding in edge-to-edge mode.
 - Coach planner: non-finite plan times guarded, days isolated, stale-day load
   guard, midnight marker rollover.
 - Workout: PR prior-best scoped to earlier sessions; one session baseline shared

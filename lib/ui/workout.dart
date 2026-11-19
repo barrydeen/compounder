@@ -572,7 +572,12 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
           ],
         ),
         body: ListView(
-          padding: const EdgeInsets.all(20),
+          // Edge-to-edge Android draws the body behind the system navigation
+          // bar (back / home / recents). Without the inset as extra bottom
+          // padding the last child — the Add exercise button — ends up
+          // underneath it.
+          padding: EdgeInsets.fromLTRB(
+              20, 20, 20, 20 + MediaQuery.paddingOf(context).bottom),
           children: [
             Row(children: [
               Expanded(
