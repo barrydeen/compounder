@@ -519,7 +519,7 @@ void main() {
 
       store = await AppStore.open(await SharedPreferences.getInstance(),
           path: path);
-      expect(await store.db.getVersion(), 15);
+      expect(await store.db.getVersion(), 16);
 
       final sets = await store.db.query('workout_sets');
       expect(sets, hasLength(2), reason: 'every set must survive the upgrade');

@@ -350,6 +350,29 @@ class MoodEntry {
       };
 }
 
+/// One body-weight measurement. Stored in kilograms regardless of the user's
+/// display unit; the UI converts with `fromKg`/`parseWeightKg`.
+class WeightEntry {
+  final int id;
+  final int timestamp;
+  final double weightKg;
+
+  const WeightEntry(
+      {required this.id, required this.timestamp, required this.weightKg});
+
+  factory WeightEntry.fromMap(Map<String, Object?> m) => WeightEntry(
+        id: m['id'] as int,
+        timestamp: m['timestamp'] as int,
+        weightKg: (m['weight_kg'] as num).toDouble(),
+      );
+
+  Map<String, Object?> toMap() => {
+        if (id != 0) 'id': id,
+        'timestamp': timestamp,
+        'weight_kg': weightKg,
+      };
+}
+
 class MeditationEntry {
   final int id;
   final int timestamp;

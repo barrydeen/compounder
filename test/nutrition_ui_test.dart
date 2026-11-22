@@ -3,6 +3,7 @@ import 'package:compounder/data/store.dart';
 import 'package:compounder/ui/drawer.dart';
 import 'package:compounder/ui/macros.dart';
 import 'package:compounder/ui/widgets.dart';
+import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
@@ -176,19 +177,21 @@ void main() {
   });
 
   testWidgets(
-      'metric switch changes the weekly numbers and every bar has a semantic '
-      'label with day, value and over/under', (tester) async {
+      'the weekly chart is calories only, stacked by macros, and every bar '
+      'has a semantic label with day, total and breakdown', (tester) async {
     final handle = tester.ensureSemantics();
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
 
     await tester.runAsync(() async {
-      // 500 kcal is under the 2000 goal; 200 g protein is over the 150 goal.
+      // 100 g protein + 25 g carbs + 0 g fat = 400 + 100 = 500 kcal, under the
+      // 2000 goal.
       await store.addMeal(mealAt(
           DateTime(today.year, today.month, today.day, 12),
           dish: 'Today bowl',
           calories: 500,
-          protein: 200));
+          protein: 100,
+          carbs: 25));
     });
 
     await tallViewport(tester);
@@ -198,12 +201,13 @@ void main() {
 
     expect(find.text('0 over · 1 under · 6 not logged'), findsOneWidget);
     expect(
-        find.bySemanticsLabel('Weekly Calories chart, 7 days, '
-            'goal 2000 kcal per day'),
+        find.bySemanticsLabel('Weekly calories chart, 7 days, '
+            'goal 2000 kcal per day, stacked by protein, carbs and fat'),
         findsOneWidget);
+    const breakdown = '500 kcal (400 from protein, 100 carbs, 0 fat), '
+        '1500 under goal';
     expect(
-        find.bySemanticsLabel(
-            '${longDays[today.weekday - 1]}: 500 kcal, 1500 under goal'),
+        find.bySemanticsLabel('${longDays[today.weekday - 1]}: $breakdown'),
         findsOneWidget);
     // The bar overlay itself, not just the chip below it, carries the label
     // (review nutrition MINOR-3).
@@ -212,22 +216,51 @@ void main() {
             .getSemantics(
                 find.byKey(ValueKey('macros-bar-sem-${today.weekday - 1}')))
             .label,
-        '${longDays[today.weekday - 1]}: 500 kcal, 1500 under goal');
+        '${longDays[today.weekday - 1]}: $breakdown');
 
-    await tester.tap(find.byKey(const ValueKey('macros-metric-protein')));
-    await tester.pumpAndSettle();
+    // The metric switch is gone; the chart is always calories.
+    expect(find.byKey(const ValueKey('macros-metric-protein')), findsNothing);
 
-    expect(find.text('1 over · 0 under · 6 not logged'), findsOneWidget);
-    expect(
-        find.bySemanticsLabel('Weekly Protein chart, 7 days, '
-            'goal 150 g per day'),
-        findsOneWidget);
-    expect(
-        find.bySemanticsLabel(
-            '${longDays[today.weekday - 1]}: 200 g, 50 over goal'),
-        findsOneWidget);
+    // The legend names each colour, and the stack order is protein → carbs →
+    // fat.
+    expect(find.byKey(const ValueKey('macros-legend-protein')), findsOneWidget);
+    expect(find.byKey(const ValueKey('macros-legend-carbs')), findsOneWidget);
+    expect(find.byKey(const ValueKey('macros-legend-fat')), findsOneWidget);
 
     handle.dispose();
+  });
+
+  testWidgets('the weekly bars stack protein, carbs and fat to the day total',
+      (tester) async {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+
+    await tester.runAsync(() async {
+      // 100 g protein + 25 g carbs + 10 g fat = 400 + 100 + 90 = 590 kcal.
+      await store.addMeal(mealAt(
+          DateTime(today.year, today.month, today.day, 12),
+          dish: 'Today bowl',
+          calories: 590,
+          protein: 100,
+          carbs: 25,
+          fat: 10));
+    });
+
+    await tallViewport(tester);
+    await tester.pumpWidget(
+        host(ShellNav(openDrawer: () {}, child: const MacrosTab())));
+    await tester.pumpAndSettle();
+
+    final chart = tester.widget<BarChart>(find.byType(BarChart));
+    final rod = chart.data.barGroups[today.weekday - 1].barRods.single;
+    expect(rod.rodStackItems, hasLength(3));
+    expect(rod.rodStackItems[0].fromY, 0);
+    expect(rod.rodStackItems[0].toY, closeTo(400, 0.001));
+    expect(rod.rodStackItems[1].toY, closeTo(500, 0.001));
+    expect(rod.rodStackItems[2].toY, closeTo(590, 0.001));
+    // The rod's top is the day's stored total, so the goal line and the
+    // "x / 2000 kcal" row agree with the bar.
+    expect(rod.toY, 590);
   });
 
   testWidgets('the tab rolls over to the new day at local midnight',
@@ -271,8 +304,8 @@ void main() {
     expect(find.text('0 / 0 kcal'), findsOneWidget);
     expect(find.text('0 / 0 g'), findsNWidgets(3));
     expect(
-        find.bySemanticsLabel('Weekly Calories chart, 7 days, '
-            'goal 0 kcal per day'),
+        find.bySemanticsLabel('Weekly calories chart, 7 days, '
+            'goal 0 kcal per day, stacked by protein, carbs and fat'),
         findsOneWidget);
   });
 

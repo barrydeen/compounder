@@ -51,7 +51,7 @@ void main() {
     final prefs = await SharedPreferences.getInstance();
     store = await AppStore.open(prefs, path: path);
 
-    expect(await store.db.getVersion(), 15);
+    expect(await store.db.getVersion(), 16);
     for (final table in ['grocery_lists', 'grocery_items', 'purchases']) {
       final exists = await store.db.rawQuery(
           "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
@@ -81,7 +81,7 @@ void main() {
 
     final prefs = await SharedPreferences.getInstance();
     store = await AppStore.open(prefs, path: path);
-    expect(await store.db.getVersion(), 15);
+    expect(await store.db.getVersion(), 16);
 
     // And a full rewind onto a populated database is equally harmless.
     final listId = await store.createGroceryList('Keep');
@@ -90,7 +90,7 @@ void main() {
     await store.db.close();
 
     store = await AppStore.open(prefs, path: path);
-    expect(await store.db.getVersion(), 15);
+    expect(await store.db.getVersion(), 16);
     expect(store.groceryLists.single.name, 'Keep',
         reason: 'the additive step must not wipe existing grocery data');
     expect(store.groceryItems.single.text, 'Tea');

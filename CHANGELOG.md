@@ -38,6 +38,10 @@ Release candidate. Not yet tagged.
 - **Habit tracker** — schema v10 CRUD, coach tools, backup format 4.
 - **Nutrition browsing by date** with a weekly macro/calorie tracker.
 - **Manual meal logging** and a macro-to-calorie calculator.
+- **Weight tracking** — schema v16 `weights` log (in the backup file), a scale
+  button in the Diet app bar opening a chart of every measurement with a 7-day
+  trailing average, and range filters. The Diet tab's Log button is now a menu
+  with Meal and Weight, and either one lands on the day being viewed.
 - **Expand/collapse per-set detail** in past workout summaries.
 - **Workout summary celebration** — finishing a workout lands on a confetti
   burst, then a walkthrough that scrolls to each personal record, highlights it
@@ -56,6 +60,14 @@ Release candidate. Not yet tagged.
 
 ### Changed
 
+- The Diet tab's weekly tracker charts calories only; each bar is now stacked by
+  the protein, carbs and fat behind that day's total, with a colour legend and a
+  per-macro breakdown in every bar's screen-reader label (the metric switch is
+  gone).
+- The meal gallery shows only meals that actually have a photo, so manual and
+  coach-logged entries no longer appear as placeholder tiles.
+- A meal logged from a past day (photo or manual) is saved on the day being
+  viewed instead of today.
 - Rest-timer cues tick once on each of the final five seconds (5, 4, 3, 2, 1)
   instead of a single tick at five; the distinct "go" tone still plays at zero.
 - Warm-up ("work-up") sets now count toward the session's volume, sets and reps

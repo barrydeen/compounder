@@ -463,7 +463,7 @@ void main() {
 
       store = await AppStore.open(await SharedPreferences.getInstance(),
           path: path);
-      expect(await store.db.getVersion(), 15);
+      expect(await store.db.getVersion(), 16);
 
       final sets = await store.db.query('workout_sets');
       expect(sets, hasLength(3), reason: 'every set must survive the upgrade');
@@ -486,7 +486,7 @@ void main() {
       await store.db.close();
       store = await AppStore.open(await SharedPreferences.getInstance(),
           path: path);
-      expect(await store.db.getVersion(), 15);
+      expect(await store.db.getVersion(), 16);
       final again = await store.db.query('workout_sets');
       expect(again, hasLength(3));
       expect(again.firstWhere((s) => s['weight_kg'] == 120.0)['is_pr'], 1);

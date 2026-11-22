@@ -62,6 +62,7 @@ class BackupService {
       'habits': await db.query('habits'),
       'habitCompletions': await db.query('habit_completions'),
       'planBlocks': await db.query('plan_blocks'),
+      'weights': await db.query('weights'),
       'healthRecords': await db.query('health_records'),
       'healthDaily': await db.query('health_daily'),
       'healthSyncState': await db.query('health_sync_state'),
@@ -148,6 +149,7 @@ class BackupService {
         'habit_completions',
         'habits',
         'plan_blocks',
+        'weights',
         'health_records',
         'health_daily',
         'health_sync_state',
@@ -307,6 +309,11 @@ class BackupService {
       // another row, so they insert verbatim after the wipe above.
       for (final r in rows('planBlocks')) {
         await insertRow('plan_blocks', r);
+      }
+      // Body-weight measurements carry no foreign key, so they insert
+      // verbatim after the wipe above.
+      for (final r in rows('weights')) {
+        await insertRow('weights', r);
       }
       for (final entry in {
         'healthRecords': 'health_records',

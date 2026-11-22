@@ -18,10 +18,14 @@ import '../llm/routing.dart';
 import 'drawer.dart';
 import 'grocery.dart';
 import 'meal_entry.dart';
+import 'weight.dart';
 import 'widgets.dart';
 
 /// How the user chose to log a meal from the "Log meal" sheet.
 enum _MealSource { camera, gallery, manual }
+
+/// What the "Log" button on the Diet tab is logging.
+enum _LogKind { meal, weight }
 
 /// A goal or total that is safe to divide by and to plot: non-finite values
 /// (`NaN`, `Infinity`) and non-positive goals become 0 (review nutrition
@@ -55,8 +59,6 @@ class _MacrosTabState extends State<MacrosTab> {
   /// yesterday as the selected day after midnight until the user tapped
   /// forward (review nutrition MINOR-1).
   Timer? _rollover;
-
-  NutritionMetric _metric = NutritionMetric.calories;
 
   DateTime get _today => localMidnight(widget.now());
 
@@ -175,6 +177,13 @@ class _MacrosTabState extends State<MacrosTab> {
         ]),
         actions: [
           IconButton(
+            key: const ValueKey('macros-weight-chart'),
+            icon: const Icon(Icons.monitor_weight_outlined),
+            tooltip: 'Weight',
+            onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const WeightChartScreen())),
+          ),
+          IconButton(
             icon: const Icon(Icons.photo_library_outlined),
             tooltip: 'Meal gallery',
             onPressed: () => Navigator.of(context)
@@ -192,9 +201,9 @@ class _MacrosTabState extends State<MacrosTab> {
         heroTag: 'log-meal',
         backgroundColor: scheme.primary,
         foregroundColor: scheme.onPrimary,
-        onPressed: () => _logMeal(context, store),
+        onPressed: () => _logMenu(context, store),
         icon: const Icon(Icons.add),
-        label: const Text('Log meal'),
+        label: const Text('Log'),
       ),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(20, 20, 20, 96),
@@ -225,7 +234,8 @@ class _MacrosTabState extends State<MacrosTab> {
             EmptyState(
               title: 'Nothing logged on this day',
               subtitle:
-                  'Tap "Log meal" to add one — you can back-date it to this day.',
+                  'Tap "Log" → "Meal" to add one — it lands on the day you are '
+                  'viewing.',
               icon: Icons.restaurant,
             )
           else
@@ -324,24 +334,28 @@ class _MacrosTabState extends State<MacrosTab> {
     );
   }
 
-  /// Weekly tracker: seven bars against the saved goal for the selected
-  /// metric, a numeric over/under summary, and one labelled chip per day.
+  /// Weekly tracker: seven calorie bars, each stacked by the macros behind
+  /// that day's calories, a numeric over/under summary, and one labelled chip
+  /// per day.
   ///
-  /// Over/under is never conveyed by colour alone: every bar has a chip with a
-  /// signed number and a ▲/▼/= glyph, and each chip carries a semantic label
-  /// ("Monday: 2100 kcal, 100 over goal") that mirrors the bar.
+  /// The stack always runs protein → carbs → fat from the bottom up and the
+  /// legend names the three colours, so the split never depends on colour
+  /// alone. Over/under is carried by the dashed goal line plus the signed
+  /// number and ▲/▼/= glyph on every chip, and each bar carries a semantic
+  /// label with the day's total, its macro breakdown and the distance from
+  /// goal.
   Widget _weeklyCard(
       BuildContext context, List<NutritionDay> week, NutritionGoals goals) {
     final scheme = Theme.of(context).colorScheme;
     final t = Theme.of(context).textTheme;
     final isCurrentWeek = _weekStart == weekStartFor(_today);
-    final goal = _finiteGoal(_metric.goalOf(goals));
-    final values = [
-      for (final d in week) _finiteValue(_metric.valueOf(d.totals))
-    ];
-    final peak = [goal, ...values].reduce(math.max);
+    final goal = _finiteGoal(goals.calories);
+    final values = [for (final d in week) _finiteValue(d.totals.calories)];
+    final splits = [for (final d in week) macroCalorieSplit(d.totals)];
+    final peak =
+        [goal, ...values, ...splits.map((s) => s.total)].reduce(math.max);
     final maxY = peak.isFinite && peak > 0 ? peak * 1.15 : 1.0;
-    final summary = summarizeWeek(week, _metric);
+    final summary = summarizeWeek(week, NutritionMetric.calories);
 
     return Card(
       color: scheme.surfaceContainerLow,
@@ -367,20 +381,12 @@ class _MacrosTabState extends State<MacrosTab> {
               onPressed: isCurrentWeek ? null : () => _stepWeek(1),
             ),
           ]),
-          Wrap(spacing: 8, runSpacing: 8, children: [
-            for (final metric in NutritionMetric.values)
-              ChoiceChip(
-                key: ValueKey('macros-metric-${metric.name}'),
-                label: Text(metric.label),
-                selected: _metric == metric,
-                onSelected: (_) => setState(() => _metric = metric),
-              ),
-          ]),
           const SizedBox(height: 12),
           Semantics(
             container: true,
-            label: 'Weekly ${_metric.label} chart, ${week.length} days, '
-                'goal ${trimZero(goal)} ${_metric.unit} per day',
+            label: 'Weekly calories chart, ${week.length} days, '
+                'goal ${trimZero(goal)} kcal per day, stacked by protein, '
+                'carbs and fat',
             child: SizedBox(
               height: 150,
               child: Stack(children: [
@@ -398,20 +404,9 @@ class _MacrosTabState extends State<MacrosTab> {
                                 toY: values[i],
                                 width: 14,
                                 borderRadius: BorderRadius.circular(3),
-                                // The part above the goal is drawn in the error
-                                // colour; the chip below carries the same fact
-                                // as text, so colour is never the only signal.
-                                rodStackItems: values[i] > goal
-                                    ? [
-                                        BarChartRodStackItem(
-                                            0, goal, scheme.primary),
-                                        BarChartRodStackItem(
-                                            goal, values[i], scheme.error),
-                                      ]
-                                    : [
-                                        BarChartRodStackItem(
-                                            0, values[i], scheme.primary)
-                                      ],
+                                color: scheme.primary,
+                                rodStackItems:
+                                    _stackFor(values[i], splits[i], scheme),
                               ),
                             ]),
                         ],
@@ -477,6 +472,14 @@ class _MacrosTabState extends State<MacrosTab> {
             ),
           ),
           const SizedBox(height: 8),
+          // Legend: names each colour, and the stack order is fixed, so the
+          // macro split is readable without relying on colour perception.
+          Wrap(spacing: 16, runSpacing: 6, children: [
+            _macroLegend(scheme.primary, 'Protein', t, 'protein'),
+            _macroLegend(scheme.secondary, 'Carbs', t, 'carbs'),
+            _macroLegend(scheme.tertiary, 'Fat', t, 'fat'),
+          ]),
+          const SizedBox(height: 8),
           Text(
             '${summary.over} over · ${summary.under} under · '
             '${summary.unlogged} not logged',
@@ -491,27 +494,89 @@ class _MacrosTabState extends State<MacrosTab> {
     );
   }
 
-  /// The semantic label for one day's bar and chip: day, value and over/under.
+  /// The macro segments for one day's bar.
+  ///
+  /// Segment heights follow the macro calorie shares (4/4/9), scaled so the
+  /// stack ends exactly at the day's stored calorie total. Manual and edited
+  /// meals are 4/4/9 by construction, so there the segments are the literal
+  /// numbers; an AI estimate that disagrees would otherwise draw a bar whose
+  /// top does not match the "x / 2000 kcal" row and the goal line.
+  List<BarChartRodStackItem> _stackFor(
+      double total, MacroCalorieSplit split, ColorScheme scheme) {
+    if (total <= 0) return const [];
+    final items = <BarChartRodStackItem>[];
+    var from = 0.0;
+    void add(double value, Color color) {
+      if (value <= 0) return;
+      items.add(BarChartRodStackItem(from, from + value, color));
+      from += value;
+    }
+
+    if (split.total <= 0) {
+      // Calories with no macro breakdown (a coach estimate of 0/0/0): the bar
+      // is still drawn, in one neutral colour.
+      add(total, scheme.onSurfaceVariant);
+    } else {
+      final scale = total / split.total;
+      add(split.protein * scale, scheme.primary);
+      add(split.carbs * scale, scheme.secondary);
+      add(split.fat * scale, scheme.tertiary);
+      // Floating-point drift leaves the last segment a hair short of the
+      // total; absorb it into the top segment so the rounded rod corner sits
+      // exactly at toY.
+      final last = items.last;
+      if (last.toY < total) {
+        items[items.length - 1] =
+            BarChartRodStackItem(last.fromY, total, last.color);
+      }
+    }
+    return items;
+  }
+
+  Widget _macroLegend(Color color, String label, TextTheme t, String key) =>
+      Row(
+        key: ValueKey('macros-legend-$key'),
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 10,
+            height: 10,
+            decoration: BoxDecoration(
+                color: color, borderRadius: BorderRadius.circular(2)),
+          ),
+          const SizedBox(width: 6),
+          Text(label,
+              style: t.labelSmall?.copyWith(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant)),
+        ],
+      );
+
+  /// The semantic label for one day's bar and chip: day, total calories, the
+  /// macro breakdown behind them, and over/under.
   String _daySemantics(NutritionDay day) {
-    final value = _finiteValue(_metric.valueOf(day.totals));
-    final delta = day.deltaFor(_metric);
+    final value = _finiteValue(day.totals.calories);
+    final delta = day.deltaFor(NutritionMetric.calories);
     final longDay = _weekdayLong(day.day);
-    final unit = _metric.unit;
     if (!day.logged) return '$longDay: nothing logged';
+    final split = macroCalorieSplit(day.totals);
+    final breakdown = '${trimZero(split.protein)} from protein, '
+        '${trimZero(split.carbs)} carbs, ${trimZero(split.fat)} fat';
     if (delta > 0) {
-      return '$longDay: ${trimZero(value)} $unit, ${trimZero(delta)} over goal';
+      return '$longDay: ${trimZero(value)} kcal ($breakdown), '
+          '${trimZero(delta)} over goal';
     }
     if (delta < 0) {
-      return '$longDay: ${trimZero(value)} $unit, ${trimZero(-delta)} under goal';
+      return '$longDay: ${trimZero(value)} kcal ($breakdown), '
+          '${trimZero(-delta)} under goal';
     }
-    return '$longDay: ${trimZero(value)} $unit, exactly on goal';
+    return '$longDay: ${trimZero(value)} kcal ($breakdown), exactly on goal';
   }
 
   /// Text counterpart of one bar: day, value and signed over/under.
   Widget _dayChip(BuildContext context, NutritionDay day) {
     final scheme = Theme.of(context).colorScheme;
-    final value = _finiteValue(_metric.valueOf(day.totals));
-    final delta = day.deltaFor(_metric);
+    final value = _finiteValue(day.totals.calories);
+    final delta = day.deltaFor(NutritionMetric.calories);
     final weekday = _weekdayShort(day.day);
     final String text;
     if (!day.logged) {
@@ -535,6 +600,58 @@ class _MacrosTabState extends State<MacrosTab> {
         child: Text(text, style: Theme.of(context).textTheme.labelSmall),
       ),
     );
+  }
+
+  /// Entry point for the "Log" button: a small menu so a meal and a weigh-in
+  /// are both one tap away from the Diet tab.
+  Future<void> _logMenu(BuildContext context, AppStore store) async {
+    final choice = await showModalBottomSheet<_LogKind>(
+      context: context,
+      builder: (sheetContext) => SafeArea(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          ListTile(
+            key: const ValueKey('log-menu-meal'),
+            leading: const Icon(Icons.restaurant),
+            title: const Text('Meal'),
+            subtitle: const Text('Photo, gallery or manual entry'),
+            onTap: () => Navigator.of(sheetContext).pop(_LogKind.meal),
+          ),
+          ListTile(
+            key: const ValueKey('log-menu-weight'),
+            leading: const Icon(Icons.monitor_weight_outlined),
+            title: const Text('Weight'),
+            subtitle: const Text('Record your body weight'),
+            onTap: () => Navigator.of(sheetContext).pop(_LogKind.weight),
+          ),
+        ]),
+      ),
+    );
+    if (choice == null || !context.mounted) return;
+    switch (choice) {
+      case _LogKind.meal:
+        await _logMeal(context, store);
+      case _LogKind.weight:
+        await _logWeight(context, store);
+    }
+  }
+
+  /// Logs a body-weight measurement on the day being viewed (today when the
+  /// tab is on today), matching how a back-dated meal lands.
+  Future<void> _logWeight(BuildContext context, AppStore store) async {
+    final now = widget.now();
+    final initial = _isToday
+        ? now
+        : DateTime(_day.year, _day.month, _day.day, now.hour, now.minute);
+    final entry = await showModalBottomSheet<WeightEntry>(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => LogWeightSheet(unit: store.unit, initialDate: initial),
+    );
+    if (entry == null || !context.mounted) return;
+    await store.logWeight(entry.weightKg, timestamp: entry.timestamp);
+    if (!context.mounted) return;
+    _snack(context,
+        'Weight logged: ${trimZero(fromKg(entry.weightKg, store.unit))} ${store.unit.label}');
   }
 
   /// Entry point for logging a meal. Manual entry is offered first-class and
@@ -621,9 +738,19 @@ class _MacrosTabState extends State<MacrosTab> {
           note: description.isEmpty ? null : description);
       if (!context.mounted) return;
       Navigator.of(context).pop();
+      // A meal logged while a past day is on screen belongs to that day, not
+      // to today: the reviewed meal keeps the displayed date (same time of day)
+      // so it lands in the list the user is looking at.
+      final now = widget.now();
+      final logDate = _isToday
+          ? null
+          : DateTime(_day.year, _day.month, _day.day, now.hour, now.minute);
       Navigator.of(context).push(MaterialPageRoute(
           builder: (_) => ReviewScreen(
-              draft: draft, imagePath: file.path, description: description)));
+              draft: draft,
+              imagePath: file.path,
+              description: description,
+              initialTimestamp: logDate)));
     } catch (e) {
       if (!context.mounted) return;
       Navigator.of(context).pop();
@@ -765,12 +892,19 @@ class ReviewScreen extends StatefulWidget {
   /// Non-null when this screen is editing a meal that is already saved.
   final Meal? existing;
 
+  /// The day a *new* meal belongs to. Null means "now"; the Diet tab passes
+  /// the day it is showing when that day is not today, so a photo meal logged
+  /// while browsing a past date lands on that date. Edit mode always keeps the
+  /// stored row's timestamp.
+  final DateTime? initialTimestamp;
+
   const ReviewScreen({
     super.key,
     required this.draft,
     required this.imagePath,
     this.description = '',
     this.existing,
+    this.initialTimestamp,
   });
 
   /// Edit mode: pre-fills every field from [meal] so saving updates that row
@@ -855,7 +989,8 @@ class _ReviewScreenState extends State<ReviewScreen> {
     final meal = Meal(
       // Edit mode keeps the row identity; new meals get 0 so SQLite assigns it.
       id: existing?.id ?? 0,
-      timestamp: existing?.timestamp ?? DateTime.now().millisecondsSinceEpoch,
+      timestamp: existing?.timestamp ??
+          (widget.initialTimestamp ?? DateTime.now()).millisecondsSinceEpoch,
       imagePath: widget.imagePath,
       dish: dish.text.trim().isEmpty ? 'Meal' : dish.text.trim(),
       description: note.isEmpty ? null : note,
@@ -1031,12 +1166,18 @@ class GalleryScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final store = context.watch<AppStore>();
+    // Only meals that actually have a photo belong in the photo gallery:
+    // manual entries and coach-logged meals have no image and would otherwise
+    // show as a grid of identical placeholders. They stay reachable from the
+    // day list, meal detail and edit/delete flows.
+    final photoMeals =
+        store.meals.where((m) => m.imagePath.isNotEmpty).toList();
     return Scaffold(
       appBar: AppBar(title: const Text('Meal gallery')),
-      body: store.meals.isEmpty
+      body: photoMeals.isEmpty
           ? const Center(
               child: EmptyState(
-                title: 'No meals yet',
+                title: 'No meal photos yet',
                 subtitle: 'Photos of logged meals will gather here.',
                 icon: Icons.photo_library_outlined,
               ),
@@ -1049,9 +1190,9 @@ class GalleryScreen extends StatelessWidget {
                 crossAxisSpacing: 12,
                 childAspectRatio: 0.8,
               ),
-              itemCount: store.meals.length,
+              itemCount: photoMeals.length,
               itemBuilder: (context, i) {
-                final meal = store.meals[i];
+                final meal = photoMeals[i];
                 return _MealThumb(
                   meal: meal,
                   onTap: () => Navigator.of(context).push(MaterialPageRoute(

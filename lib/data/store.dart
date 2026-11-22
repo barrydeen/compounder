@@ -122,6 +122,7 @@ class AppStore extends ChangeNotifier implements DeviceTokenStore {
   List<GroceryList> groceryLists = [];
   List<GroceryItem> groceryItems = [];
   List<PurchaseRecord> purchases = [];
+  List<WeightEntry> weights = [];
   List<int> usageOrder = [];
 
   AppStore._(this.db, this.prefs);
@@ -137,7 +138,7 @@ class AppStore extends ChangeNotifier implements DeviceTokenStore {
       {String? path, SecretStore? secretStore}) async {
     path ??= p.join(await getDatabasesPath(), 'compounder.db');
     final db = await openDatabase(path,
-        version: 15,
+        version: 16,
         onConfigure: _configureSchema,
         onCreate: _createSchema,
         onUpgrade: _upgradeSchema);
@@ -206,6 +207,7 @@ class AppStore extends ChangeNotifier implements DeviceTokenStore {
     await _createV11Indexes(db);
     await _createV13Tables(db);
     await _createV15Tables(db);
+    await _createV16Tables(db);
   }
 
   static Future<void> _createV2Tables(Database db) async {
@@ -357,6 +359,13 @@ class AppStore extends ChangeNotifier implements DeviceTokenStore {
       // partially applied migration.
       await _createV15Tables(db);
     }
+    if (oldVersion < 16) {
+      // Body-weight log for the Diet tab's weight chart. Purely additive: one
+      // new table and its index, no existing row is touched, so a v15 install
+      // keeps every meal, workout, habit and health record. IF NOT EXISTS makes
+      // the step safe to re-run on a partially applied migration.
+      await _createV16Tables(db);
+    }
   }
 
   /// Indexes for the non-health tables (schema v8/v9). Idempotent so both
@@ -486,6 +495,21 @@ class AppStore extends ChangeNotifier implements DeviceTokenStore {
         'CREATE INDEX IF NOT EXISTS idx_grocery_items_list ON grocery_items(list_id, position)');
   }
 
+  /// Schema v16: the body-weight log. Idempotent, additive only.
+  ///
+  /// Weight is stored in kilograms (the unit every other weight in the app is
+  /// persisted in); the chart converts to the user's kg/lb setting at display
+  /// time. The timestamp index serves both the chronological chart query and
+  /// the rolling-average pass.
+  static Future<void> _createV16Tables(Database db) async {
+    await db.execute('''CREATE TABLE IF NOT EXISTS weights(
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      timestamp INTEGER NOT NULL,
+      weight_kg REAL NOT NULL)''');
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_weights_timestamp ON weights(timestamp)');
+  }
+
   /// Adds [column] to [table] only when it is absent, so a partially applied
   /// migration can be re-run without throwing "duplicate column name".
   static Future<void> _addColumnIfMissing(
@@ -577,6 +601,9 @@ class AppStore extends ChangeNotifier implements DeviceTokenStore {
     purchases = (await db.query('purchases',
             orderBy: 'times_bought DESC, last_bought_at DESC'))
         .map(PurchaseRecord.fromMap)
+        .toList();
+    weights = (await db.query('weights', orderBy: 'timestamp ASC'))
+        .map(WeightEntry.fromMap)
         .toList();
     final usageRows = await db.rawQuery('''
         SELECT we.exercise_id eid, COUNT(*) c FROM workout_exercises we
@@ -1294,6 +1321,25 @@ class AppStore extends ChangeNotifier implements DeviceTokenStore {
 
   Future<void> deleteMeal(int id) async {
     await db.delete('meals', where: 'id = ?', whereArgs: [id]);
+    await refreshAll();
+  }
+
+  // ------------------------------------------------------------ weight
+
+  /// Records one body-weight measurement. [weightKg] is stored verbatim; the
+  /// caller parses the user's unit into kg with `parseWeightKg`. [timestamp]
+  /// defaults to now, and the Diet tab passes the day it is showing so a
+  /// back-dated weigh-in lands on that day.
+  Future<void> logWeight(double weightKg, {int? timestamp}) async {
+    await db.insert('weights', {
+      'timestamp': timestamp ?? DateTime.now().millisecondsSinceEpoch,
+      'weight_kg': weightKg,
+    });
+    await refreshAll();
+  }
+
+  Future<void> deleteWeight(int id) async {
+    await db.delete('weights', where: 'id = ?', whereArgs: [id]);
     await refreshAll();
   }
 

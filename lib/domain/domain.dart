@@ -629,6 +629,29 @@ NutritionTotals _totalsOf(Iterable<MealNutrition> meals) {
   return totals;
 }
 
+/// The calorie contribution of each macro, using the same 4/4/9 math as
+/// [caloriesFromMacros].
+///
+/// The weekly chart stacks these as segments. Negative and non-finite grams
+/// count as zero (same rule as [caloriesFromMacros]), so a chart can never draw
+/// a negative segment.
+class MacroCalorieSplit {
+  final double protein, carbs, fat;
+  const MacroCalorieSplit(this.protein, this.carbs, this.fat);
+
+  double get total => protein + carbs + fat;
+}
+
+MacroCalorieSplit macroCalorieSplit(NutritionTotals totals) {
+  double kcal(double grams, double perGram) =>
+      grams.isFinite && grams > 0 ? grams * perGram : 0;
+  return MacroCalorieSplit(
+    kcal(totals.protein, kcalPerGramProtein),
+    kcal(totals.carbs, kcalPerGramCarbs),
+    kcal(totals.fat, kcalPerGramFat),
+  );
+}
+
 /// Totals and goal deltas for a single local day.
 NutritionDay nutritionDayFor(
     Iterable<MealNutrition> meals, DateTime day, NutritionGoals goals) {
@@ -690,4 +713,46 @@ NutritionWeekSummary summarizeWeek(
   }
   return NutritionWeekSummary(
       over: over, under: under, onTarget: onTarget, unlogged: unlogged);
+}
+
+// ---------------------------------------------------------------- weight
+
+/// One body-weight measurement for the weight chart: when it was taken and the
+/// weight in kilograms.
+class WeightPoint {
+  final int timestamp;
+  final double weightKg;
+  const WeightPoint(this.timestamp, this.weightKg);
+}
+
+/// Trailing rolling average over [points], one output point per input point.
+///
+/// Each output value averages every measurement inside the window ending at
+/// that measurement (`[timestamp - window, timestamp]`). That handles sparse
+/// data — a week with two weigh-ins still yields a smooth line — and needs no
+/// gap filling, so a day with no measurement simply has no output point rather
+/// than an invented value. Input order does not matter; output is ascending by
+/// timestamp. Non-finite weights are skipped (a corrupt row must not poison
+/// the whole line).
+List<WeightPoint> rollingWeightAverage(List<WeightPoint> points,
+    {Duration window = const Duration(days: 7)}) {
+  final sorted = points
+      .where((p) => p.weightKg.isFinite)
+      .toList()
+    ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
+  if (window <= Duration.zero) return sorted;
+  final windowMs = window.inMilliseconds;
+  final out = <WeightPoint>[];
+  var start = 0;
+  var sum = 0.0;
+  for (var i = 0; i < sorted.length; i++) {
+    sum += sorted[i].weightKg;
+    final cutoff = sorted[i].timestamp - windowMs;
+    while (sorted[start].timestamp < cutoff) {
+      sum -= sorted[start].weightKg;
+      start++;
+    }
+    out.add(WeightPoint(sorted[i].timestamp, sum / (i - start + 1)));
+  }
+  return out;
 }
