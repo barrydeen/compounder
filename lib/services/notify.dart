@@ -11,6 +11,8 @@ import '../data/store.dart';
 import '../domain/domain.dart';
 import '../domain/habits.dart';
 import '../domain/plan.dart';
+import '../health/models.dart';
+import '../health/repository.dart';
 import '../llm/routing.dart';
 
 const _channelId = 'compounder_coach';
@@ -18,6 +20,29 @@ const _channelName = 'Daily coach';
 const _channelDescription = 'A once-a-day message from your Compounder coach';
 
 const _id = 42;
+
+/// Notification id for the wake-up planning reminder. Distinct from [_id] and
+/// from the reminder ids (1000+), so scheduling one never replaces the other.
+const _morningId = 44;
+
+/// How many days of sleep are considered when learning a wake-up time. Two
+/// weeks is long enough to smooth out one late night without following a
+/// temporary schedule change for months.
+const _wakeLookbackDays = 14;
+
+/// Wake-ups outside this window are ignored: a session that ends at 15:00 is a
+/// nap or a night-shift schedule, and mixing it into the median would move the
+/// reminder to the middle of the day. Such users fall back to their chosen
+/// time.
+const _wakeEarliestMinute = 3 * 60;
+const _wakeLatestMinute = 13 * 60;
+
+/// Sessions shorter than this are naps, not the night that ended in a wake-up.
+const _minNightMinutes = 3 * 60;
+
+/// Fewer completed nights than this and the median is noise; the fallback time
+/// is more trustworthy than a single imported night.
+const _minWakeNights = 3;
 
 /// Notification details with a [BigTextStyleInformation] payload.
 ///
@@ -97,6 +122,49 @@ class NotifyService {
   final FlutterLocalNotificationsPlugin _plugin =
       FlutterLocalNotificationsPlugin();
   bool _ready = false;
+
+  /// Median wake-up time (minutes after local midnight) across completed
+  /// nights.
+  ///
+  /// Wake-up times are learned from the local Health Connect sleep records
+  /// rather than guessed from a fixed schedule: "when I wake up" moves, and a
+  /// reminder at the wrong time is just another alarm to dismiss. The median is
+  /// used instead of the mean so one late night cannot drag the reminder hours
+  /// later.
+  ///
+  /// Only completed nights count: a session that ends in the future is still in
+  /// progress, wake-ups outside [_wakeEarliestMinute]–[_wakeLatestMinute] are
+  /// naps or atypical schedules, and a night needs [_minNightMinutes] of sleep
+  /// to count. Fragmented nights are grouped by wake day and only the last end
+  /// is used, so a mid-night awakening is not mistaken for the wake-up.
+  /// Returns null until [_minWakeNights] usable nights exist.
+  @visibleForTesting
+  static int? wakeMinutesFromSessions(List<SleepSession> sessions,
+      {DateTime? now}) {
+    final anchor = now ?? DateTime.now();
+    final byDay = <String, List<SleepSession>>{};
+    for (final session in sessions) {
+      final wake = DateTime.fromMillisecondsSinceEpoch(session.end);
+      if (wake.isAfter(anchor)) continue;
+      final minute = wake.hour * 60 + wake.minute;
+      if (minute < _wakeEarliestMinute || minute > _wakeLatestMinute) continue;
+      byDay.putIfAbsent(session.date, () => []).add(session);
+    }
+    final wakes = <int>[];
+    for (final day in byDay.values) {
+      final asleep = day.fold<int>(0, (a, s) => a + s.asleepMinutes);
+      if (asleep < _minNightMinutes) continue;
+      final last = day.reduce((a, b) => a.end >= b.end ? a : b);
+      final wake = DateTime.fromMillisecondsSinceEpoch(last.end);
+      wakes.add(wake.hour * 60 + wake.minute);
+    }
+    if (wakes.length < _minWakeNights) return null;
+    wakes.sort();
+    final mid = wakes.length ~/ 2;
+    return wakes.length.isOdd
+        ? wakes[mid]
+        : ((wakes[mid - 1] + wakes[mid]) / 2).round();
+  }
 
   /// Builds the platform details for one notification body.
   ///
@@ -278,6 +346,70 @@ class NotifyService {
     return buildDigest(store, now: anchor, plan: plan);
   }
 
+  /// The wake-up reminder's message: a nudge to plan the day, not a recap.
+  ///
+  /// The evening check-in already lists what is still open. At wake-up the one
+  /// useful thing is the plan itself, so this leads with whether the day has a
+  /// plan and, when it does, names the first block so the user can start there
+  /// instead of rereading the whole day.
+  static String buildMorningDigest({List<PlanBlock> plan = const []}) {
+    final open = plan.where((b) => !b.done).toList();
+    if (open.isEmpty) {
+      if (plan.isEmpty) {
+        return 'Good morning. Your day has no plan yet — open the Planner and '
+            'block out the three things that matter most before the day fills '
+            'itself.';
+      }
+      return 'Good morning. Every block on today\'s plan is already ticked '
+          'off — open the Planner and add the next thing that matters.';
+    }
+    final next = chronological(open).first;
+    final count = open.length;
+    return 'Good morning. ${count == 1 ? 'One block is' : '$count blocks are'} '
+        'still open on today\'s plan; the next is "${next.title}" at '
+        '${_clock(next.startMin)}. Open the Planner, check the order, and start '
+        'that one.';
+  }
+
+  /// [buildMorningDigest] with today's planner blocks loaded from the database.
+  static Future<String> buildMorningCheckIn(AppStore store,
+      {DateTime? now}) async {
+    final anchor = now ?? DateTime.now();
+    List<PlanBlock> plan = const [];
+    try {
+      plan = await store.planBlocksForDay(anchor);
+    } catch (_) {
+      // A planner read must never stop the reminder from being scheduled.
+    }
+    return buildMorningDigest(plan: plan);
+  }
+
+  /// The user's usual wake-up time (minutes after local midnight), learned from
+  /// imported Health Connect sleep, or null when there is not enough data.
+  Future<int?> learnedWakeMinutes(AppStore store, {DateTime? now}) async {
+    final anchor = now ?? DateTime.now();
+    try {
+      final from =
+          DateTime(anchor.year, anchor.month, anchor.day - _wakeLookbackDays);
+      final to = DateTime(anchor.year, anchor.month, anchor.day + 1);
+      final sessions = await HealthRepository(store.db).sleepSessions(
+        from: from.millisecondsSinceEpoch,
+        to: to.millisecondsSinceEpoch,
+      );
+      return NotifyService.wakeMinutesFromSessions(sessions, now: anchor);
+    } catch (_) {
+      // Health tables may be empty or mid-migration; never block scheduling.
+      return null;
+    }
+  }
+
+  /// When to fire the wake-up reminder: the learned wake-up time, or the
+  /// user's fallback time until enough nights are available.
+  Future<int> morningMinutes(AppStore store, {DateTime? now}) async {
+    final learned = await learnedWakeMinutes(store, now: now);
+    return learned ?? store.coachMorningFallbackMinutes;
+  }
+
   static Future<String> polishDigest(AppStore store) async {
     final facts = await buildCheckIn(store);
     if (!aiConfigured(store)) return facts;
@@ -314,46 +446,74 @@ class NotifyService {
 
     // Schedule instantly with the on-device check-in; then (never blocking the
     // caller) upgrade the text with an AI polish when the endpoint answers.
-    await _scheduleDigest(tzWhen, await NotifyService.buildCheckIn(store));
+    await _scheduleDaily(_id, 'Compounder coach',
+        await NotifyService.buildCheckIn(store), tzWhen);
     unawaited(() async {
       try {
         final polished = await polishDigest(store);
-        await _scheduleDigest(tzWhen, polished);
+        await _scheduleDaily(_id, 'Compounder coach', polished, tzWhen);
       } catch (_) {}
     }());
   }
 
-  Future<void> _scheduleDigest(tz.TZDateTime when, String body) async {
+  /// Schedules the wake-up planning reminder at the learned wake-up time (or
+  /// the user's fallback), replacing any previous one.
+  ///
+  /// The OS notification repeats daily at that wall-clock time. Re-running this
+  /// after a health sync — which happens on launch and whenever the app is
+  /// resumed — re-learns the time from the newest nights, so the reminder
+  /// follows a changing routine instead of freezing at the first estimate.
+  Future<void> rescheduleMorning(AppStore store) async {
+    await init();
+    if (!store.coachMorningEnabled) {
+      await _plugin.cancel(id: _morningId);
+      return;
+    }
+    final now = DateTime.now();
+    final minutes = await morningMinutes(store, now: now);
+    final when = nextDigestAt(now, minutes);
+    // Build the text for the morning it will actually fire on, not for the
+    // moment it was scheduled: opening the app in the afternoon schedules
+    // tomorrow's reminder, which must describe tomorrow's plan.
+    final body = await buildMorningCheckIn(store, now: when);
+    await _scheduleDaily(_morningId, 'Compounder: plan your day', body,
+        tz.TZDateTime.from(when, tz.local));
+  }
+
+  Future<void> _scheduleDaily(
+      int id, String title, String body, tz.TZDateTime when) async {
+    final details = _details(body, title: title);
     try {
       await _plugin.zonedSchedule(
-        id: _id,
-        title: 'Compounder coach',
+        id: id,
+        title: title,
         body: body,
         scheduledDate: when,
-        notificationDetails: _details(body),
+        notificationDetails: details,
         androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
         matchDateTimeComponents: DateTimeComponents.time,
       );
     } catch (_) {
       // Exact alarms can be denied by the OS; fall back to an inexact schedule.
       await _plugin.zonedSchedule(
-        id: _id,
-        title: 'Compounder coach',
+        id: id,
+        title: title,
         body: body,
         scheduledDate: when,
-        notificationDetails: _details(body),
+        notificationDetails: details,
         androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
         matchDateTimeComponents: DateTimeComponents.time,
       );
     }
   }
 
-  Future<void> _showNow(String body) async {
+  Future<void> _showNow(String body,
+      {int id = _id + 1, String title = 'Compounder coach'}) async {
     await _plugin.show(
-      id: _id + 1,
-      title: 'Compounder coach',
+      id: id,
+      title: title,
       body: body,
-      notificationDetails: _details(body),
+      notificationDetails: _details(body, title: title),
     );
   }
 
@@ -410,5 +570,11 @@ class NotifyService {
   Future<void> testNotification(AppStore store) async {
     await init();
     await _showNow(await polishDigest(store));
+  }
+
+  Future<void> testMorningNotification(AppStore store) async {
+    await init();
+    await _showNow(await buildMorningCheckIn(store),
+        id: _morningId + 1, title: 'Compounder: plan your day');
   }
 }

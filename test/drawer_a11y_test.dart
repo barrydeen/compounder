@@ -325,6 +325,11 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(settingsItem);
       await tester.pumpAndSettle();
+      // SettingsScreen loads the learned wake-up time in initState; let the
+      // real sqflite work finish so no fake timer outlives the test.
+      await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 100)));
+      await tester.pump();
 
       expect(find.byType(Drawer), findsNothing);
       // Exactly one Settings route on the stack, counting offstage routes.

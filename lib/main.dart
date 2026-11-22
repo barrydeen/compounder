@@ -39,7 +39,15 @@ Future<void> main() async {
   // Never block startup on notification scheduling or health sync: both can
   // touch slow platform services, and the AI endpoint may be unreachable.
   unawaited(notify.rescheduleDaily(store));
-  unawaited(health.syncIfDue());
+  // The wake-up reminder is learned from sleep records, so sync first and then
+  // schedule it from the freshest nights. Both are best-effort: a health or
+  // notification failure must never take down startup.
+  unawaited(() async {
+    try {
+      await health.syncIfDue();
+      await notify.rescheduleMorning(store);
+    } catch (_) {}
+  }());
   // Pick up a purchase that was verified on a previous run, and refresh the
   // quota so the coach shows the right number.
   unawaited(subscription.init().then((_) => subscription.refreshEntitlement()));

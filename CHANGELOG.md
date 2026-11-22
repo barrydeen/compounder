@@ -16,6 +16,12 @@ Release candidate. Not yet tagged.
 
 ### Added
 
+- **Wake-up planning reminder** — an optional morning notification timed from
+  the user's usual wake-up, learned on-device from Health Connect sleep (median
+  of completed nights, ignoring naps and unfinished sessions) with a
+  user-chosen fallback until enough nights exist. It names the first open plan
+  block, or asks for a plan when the day has none, and re-learns the time after
+  each health sync. Settings shows the learned time and offers a test send.
 - **App icon and in-app mark** — a compounding-spiral logo replaces the default
   Flutter launcher icon on Android and iOS (legacy and adaptive icons, including
   an Android 13 themed-icon silhouette), and the same mark appears in the home

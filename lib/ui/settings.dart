@@ -60,12 +60,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
   late bool healthHistory;
   HealthAvailability? healthAvailability;
   bool healthBusy = false;
+  int? learnedWakeMinutes;
 
   @override
   void initState() {
     super.initState();
     final store = context.read<AppStore>();
     final health = context.read<HealthService>();
+    context.read<NotifyService>().learnedWakeMinutes(store).then((value) {
+      if (mounted) setState(() => learnedWakeMinutes = value);
+    });
     healthCategories = {...health.categories};
     healthAutoSync = health.autoSync;
     healthHistory = health.historyRequested;
@@ -112,6 +116,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
     void snack(String text) => ScaffoldMessenger.of(context)
         .showSnackBar(SnackBar(content: Text(text)));
+
+    String clock(int minutes) =>
+        '${minutes ~/ 60}:${(minutes % 60).toString().padLeft(2, '0')}';
 
     void openSubscription() {
       final service = subscription;
@@ -521,6 +528,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                   setState(() => healthBusy = true);
                                   try {
                                     final result = await health.syncNow();
+                                    // New sleep records change the learned
+                                    // wake-up time, so reschedule and refresh the
+                                    // value shown above.
+                                    await notify.rescheduleMorning(store);
+                                    final learned =
+                                        await notify.learnedWakeMinutes(store);
+                                    if (mounted) {
+                                      setState(
+                                          () => learnedWakeMinutes = learned);
+                                    }
                                     if (context.mounted) {
                                       snack(result.ok
                                           ? 'Synced ${result.records} health records'
@@ -681,6 +698,65 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ]),
           ),
           const SizedBox(height: 16),
+          const SectionHeader('Morning planning reminder'),
+          const SizedBox(height: 8),
+          Card(
+            color: scheme.surfaceContainerLow,
+            child: Column(children: [
+              SwitchListTile(
+                title: const Text('Plan your day when you wake up'),
+                subtitle: const Text(
+                    'A morning nudge to open the Planner, timed from your usual wake-up learned out of Health Connect sleep. Without enough sleep data it uses the fallback time below. Scheduled on this device.'),
+                value: store.coachMorningEnabled,
+                onChanged: (v) async {
+                  await store.setCoachMorning(enabled: v);
+                  await notify.rescheduleMorning(store);
+                },
+              ),
+              ListTile(
+                title: const Text('Fallback time'),
+                subtitle:
+                    const Text('Used until enough sleep nights are imported'),
+                trailing: Text(clock(store.coachMorningFallbackMinutes),
+                    style: t.titleMedium?.copyWith(color: scheme.primary)),
+                onTap: () async {
+                  final picked = await showTimePicker(
+                    context: context,
+                    initialTime: TimeOfDay(
+                        hour: store.coachMorningFallbackMinutes ~/ 60,
+                        minute: store.coachMorningFallbackMinutes % 60),
+                  );
+                  if (picked != null) {
+                    await store.setCoachMorning(
+                        fallbackMinutes: picked.hour * 60 + picked.minute);
+                    await notify.rescheduleMorning(store);
+                  }
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.bedtime_outlined, size: 20),
+                title: const Text('Usual wake-up'),
+                trailing: Text(
+                    learnedWakeMinutes == null
+                        ? 'Not learned yet'
+                        : clock(learnedWakeMinutes!),
+                    style: t.titleMedium
+                        ?.copyWith(color: scheme.onSurfaceVariant)),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                child: OutlinedButton.icon(
+                  icon: const Icon(Icons.wb_sunny_outlined, size: 18),
+                  label: const Text('Send test morning reminder'),
+                  onPressed: () async {
+                    await notify.testMorningNotification(store);
+                    if (context.mounted) snack('Morning reminder sent');
+                  },
+                ),
+              ),
+            ]),
+          ),
+          const SizedBox(height: 16),
           const SectionHeader('Reminders'),
           const SizedBox(height: 8),
           Card(
@@ -766,7 +842,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       await BackupService.import(store, path);
                       // Restored reminders carry no OS notification; schedule
                       // them now so they actually fire (audit backup MINOR-4).
+                      // Imported sleep records also change the learned wake-up
+                      // time, so refresh that reminder too.
                       await notify.rescheduleReminders(store);
+                      await notify.rescheduleMorning(store);
+                      final learned = await notify.learnedWakeMinutes(store);
+                      if (mounted) {
+                        setState(() => learnedWakeMinutes = learned);
+                      }
                       if (context.mounted) snack('Backup imported');
                     } on BackupException catch (e) {
                       // Already user-facing copy; never prefix it with a raw

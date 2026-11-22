@@ -43,6 +43,10 @@ tracking) and expands it into one place for every area of life you want to get 1
   out of the box is planned; until then, expect to bring a key.
 - Optional **daily check-in notification** that names what is still open and nudges one action,
   scheduled entirely on-device (no push servers, no Google services).
+- Optional **wake-up planning reminder**: a morning nudge to open the Planner, timed from your
+  usual wake-up learned out of the on-device Health Connect sleep records (median of recent
+  completed nights, with a fallback time you choose until enough nights exist). It re-learns after
+  each health sync, so it follows a changing routine. Also scheduled entirely on-device.
 
 ## Trust and privacy
 
@@ -108,7 +112,8 @@ flutter run --dart-define=LLM_BASE_URL=http://192.168.0.117:4000/v1 \
 - **AI** — `llm/llm.dart` (OpenAI-compatible chat + tool calling + vision meal analysis),
   `coach/agent.dart` (tool loop), `coach/tools.dart` (24 tools across all domains).
 - **Domain** — pure, unit-tested math in `domain/domain.dart` (e1RM, units, wealth, mind streaks).
-- **Services** — JSON backup export/import, on-device daily-notification scheduling.
+- **Services** — JSON backup export/import, on-device daily check-in and wake-up reminder
+  scheduling.
 
 ```
 lib/
@@ -119,7 +124,7 @@ lib/
 ├── llm/                 BYO-AI chat, tool specs, vision meal drafts
 ├── coach/               agent tool loop + health/wealth/mind tools
 ├── health/              Health Connect categories, sync, analysis and local repository
-├── services/            backup (JSON) + daily coach notifications
+├── services/            backup (JSON) + daily coach and wake-up notifications
 ├── subscription/        Compounder AI subscription: store, gateway, entitlement
 └── ui/                  shell (bottom bar: Home, Fitness, Macros, Wealth, Coach;
                           Mind is drawer-only), home, workout, picker, summary,

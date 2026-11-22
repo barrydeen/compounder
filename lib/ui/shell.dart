@@ -1,7 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../data/store.dart';
 import '../health/service.dart';
+import '../services/notify.dart';
 
 import 'coach.dart';
 import 'drawer.dart';
@@ -41,12 +45,29 @@ class _ShellScreenState extends State<ShellScreen> with WidgetsBindingObserver {
   // checklist and the drawer both call it.
   void _selectTab(int i) => setState(() => _index = i);
 
+  /// Syncs sleep, then re-learns the wake-up reminder time from the new
+  /// records. Running this on launch and on resume is what lets the reminder
+  /// follow a changing routine instead of freezing at the first estimate.
+  Future<void> _syncAndRescheduleMorning() async {
+    try {
+      await context.read<HealthService>().syncIfDue();
+      if (!mounted) return;
+      await context
+          .read<NotifyService>()
+          .rescheduleMorning(context.read<AppStore>());
+    } catch (_) {
+      // Sync and notifications are best-effort: a platform or permission
+      // failure must not break the shell, and widget tests have no
+      // notification plugin.
+    }
+  }
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) context.read<HealthService>().syncIfDue();
+      if (mounted) unawaited(_syncAndRescheduleMorning());
     });
   }
 
@@ -59,7 +80,7 @@ class _ShellScreenState extends State<ShellScreen> with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed && mounted) {
-      context.read<HealthService>().syncIfDue();
+      unawaited(_syncAndRescheduleMorning());
     }
   }
 

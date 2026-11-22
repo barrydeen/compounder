@@ -735,6 +735,25 @@ class AppStore extends ChangeNotifier implements DeviceTokenStore {
     notifyListeners();
   }
 
+  /// The morning "plan your day" reminder. Off by default, like the evening
+  /// check-in: notifications are opt-in and the OS permission is requested only
+  /// when the user turns one on.
+  bool get coachMorningEnabled => prefs.getBool('coachMorningEnabled') ?? false;
+
+  /// Time used for the morning reminder until Health Connect has enough
+  /// completed nights to learn the user's usual wake-up time.
+  int get coachMorningFallbackMinutes =>
+      prefs.getInt('coachMorningFallbackMinutes') ?? 7 * 60;
+
+  Future<void> setCoachMorning({bool? enabled, int? fallbackMinutes}) async {
+    if (enabled != null) await prefs.setBool('coachMorningEnabled', enabled);
+    if (fallbackMinutes != null) {
+      await prefs.setInt(
+          'coachMorningFallbackMinutes', fallbackMinutes.clamp(0, 24 * 60 - 1));
+    }
+    notifyListeners();
+  }
+
   // ------------------------------------------------------------ workouts
 
   Future<Workout?> activeWorkout() async {
