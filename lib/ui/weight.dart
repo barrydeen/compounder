@@ -62,10 +62,10 @@ class _WeightChartScreenState extends State<WeightChartScreen> {
       context: context,
       builder: (dialogContext) => AlertDialog(
         title: const Text('Delete this weight?'),
-        content: Text(
-            '${trimZero(fromKg(entry.weightKg, unit))} ${unit.label} on '
-            '${formatDateTime(entry.timestamp)} will be removed. '
-            'This cannot be undone.'),
+        content:
+            Text('${trimZero(fromKg(entry.weightKg, unit))} ${unit.label} on '
+                '${formatDateTime(entry.timestamp)} will be removed. '
+                'This cannot be undone.'),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(dialogContext).pop(false),
@@ -84,8 +84,8 @@ class _WeightChartScreenState extends State<WeightChartScreen> {
     if (confirmed != true || !mounted) return;
     await store.deleteWeight(entry.id);
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Weight deleted')));
+    ScaffoldMessenger.of(context)
+        .showSnackBar(const SnackBar(content: Text('Weight deleted')));
   }
 
   @override
@@ -201,8 +201,8 @@ class _WeightChartScreenState extends State<WeightChartScreen> {
             child: ExcludeSemantics(
               child: SizedBox(
                 height: 220,
-                child: _WeightChart(
-                    points: points, average: average, unit: unit),
+                child:
+                    _WeightChart(points: points, average: average, unit: unit),
               ),
             ),
           ),
@@ -226,8 +226,8 @@ class _WeightChartScreenState extends State<WeightChartScreen> {
           ),
           const SizedBox(width: 6),
           Text(label,
-              style: t.labelSmall
-                  ?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant)),
+              style: t.labelSmall?.copyWith(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant)),
         ],
       );
 
@@ -235,9 +235,8 @@ class _WeightChartScreenState extends State<WeightChartScreen> {
       List<WeightPoint> average, WeightUnit unit) {
     final latest = points.last;
     final avg = average.isEmpty ? latest : average.last;
-    final change = points.length < 2
-        ? null
-        : points.last.weightKg - points.first.weightKg;
+    final change =
+        points.length < 2 ? null : points.last.weightKg - points.first.weightKg;
     final String changeText;
     if (change == null) {
       changeText = '—';
@@ -318,7 +317,8 @@ class _WeightChart extends StatelessWidget {
     final span = maxX - minX;
     // A single measurement has no horizontal span: give it a day so the dot
     // is not pinned to the axis edge.
-    final padX = span == 0 ? const Duration(hours: 12).inMilliseconds : span * 0.04;
+    final padX =
+        span == 0 ? const Duration(hours: 12).inMilliseconds : span * 0.04;
 
     return LineChart(
       LineChartData(
@@ -341,8 +341,8 @@ class _WeightChart extends StatelessWidget {
               showTitles: true,
               reservedSize: 44,
               getTitlesWidget: (value, meta) => Text(trimZero(value),
-                  style: TextStyle(
-                      fontSize: 10, color: scheme.onSurfaceVariant)),
+                  style:
+                      TextStyle(fontSize: 10, color: scheme.onSurfaceVariant)),
             ),
           ),
           bottomTitles: AxisTitles(
@@ -398,8 +398,7 @@ class _WeightChart extends StatelessWidget {
                 LineTooltipItem(
                   '${trimZero(spot.y)} ${unit.label}\n'
                   '${_shortDate(spot.x.round())}',
-                  TextStyle(
-                      color: scheme.onInverseSurface, fontSize: 11),
+                  TextStyle(color: scheme.onInverseSurface, fontSize: 11),
                 )
             ],
           ),
@@ -495,7 +494,8 @@ class _LogWeightSheetState extends State<LogWeightSheet> {
                 onSubmitted: (_) => _save(),
                 decoration: InputDecoration(
                   labelText: 'Weight (${widget.unit.label})',
-                  hintText: widget.unit == WeightUnit.kg ? 'e.g. 78.4' : 'e.g. 172.8',
+                  hintText:
+                      widget.unit == WeightUnit.kg ? 'e.g. 78.4' : 'e.g. 172.8',
                 ),
               ),
               const SizedBox(height: 12),

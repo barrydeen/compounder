@@ -736,9 +736,7 @@ class WeightPoint {
 /// the whole line).
 List<WeightPoint> rollingWeightAverage(List<WeightPoint> points,
     {Duration window = const Duration(days: 7)}) {
-  final sorted = points
-      .where((p) => p.weightKg.isFinite)
-      .toList()
+  final sorted = points.where((p) => p.weightKg.isFinite).toList()
     ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
   if (window <= Duration.zero) return sorted;
   final windowMs = window.inMilliseconds;

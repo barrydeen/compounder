@@ -206,8 +206,7 @@ void main() {
         findsOneWidget);
     const breakdown = '500 kcal (400 from protein, 100 carbs, 0 fat), '
         '1500 under goal';
-    expect(
-        find.bySemanticsLabel('${longDays[today.weekday - 1]}: $breakdown'),
+    expect(find.bySemanticsLabel('${longDays[today.weekday - 1]}: $breakdown'),
         findsOneWidget);
     // The bar overlay itself, not just the chip below it, carries the label
     // (review nutrition MINOR-3).

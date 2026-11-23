@@ -210,15 +210,14 @@ void main() {
     expect(store.meals.single.timestamp, stored.timestamp);
   });
 
-  testWidgets(
-      'a meal logged from a past day lands on that day, not today',
+  testWidgets('a meal logged from a past day lands on that day, not today',
       (tester) async {
     // Fixed clock: 20 Nov 2026, a Friday.
     final clock = DateTime(2026, 11, 20, 9, 30);
     final viewedDay = DateTime(2026, 11, 19);
 
-    await tester.pumpWidget(host(
-        ShellNav(openDrawer: () {}, child: MacrosTab(now: () => clock))));
+    await tester.pumpWidget(
+        host(ShellNav(openDrawer: () {}, child: MacrosTab(now: () => clock))));
     await tester.pumpAndSettle();
 
     // Step back one day, then Log → Meal → Enter manually.
@@ -245,8 +244,7 @@ void main() {
 
     expect(store.meals, hasLength(1));
     final meal = store.meals.single;
-    expect(
-        localMidnight(DateTime.fromMillisecondsSinceEpoch(meal.timestamp)),
+    expect(localMidnight(DateTime.fromMillisecondsSinceEpoch(meal.timestamp)),
         viewedDay);
   });
 

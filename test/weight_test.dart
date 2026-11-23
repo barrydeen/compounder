@@ -121,7 +121,8 @@ void main() {
     // Nothing outside the additive step was touched.
     expect(db.meals.single.dish, 'Pre-upgrade bowl');
     // The new surface works immediately on the upgraded file.
-    await db.logWeight(77.4, timestamp: DateTime(2026, 11, 1).millisecondsSinceEpoch);
+    await db.logWeight(77.4,
+        timestamp: DateTime(2026, 11, 1).millisecondsSinceEpoch);
     expect(db.weights.single.weightKg, 77.4);
     await db.db.close();
     await databaseFactory.deleteDatabase(path);
@@ -144,8 +145,8 @@ void main() {
       (tester) async {
     // Fixed clock: 20 Nov 2026, a Friday.
     final clock = DateTime(2026, 11, 20, 9, 30);
-    await tester.pumpWidget(host(
-        ShellNav(openDrawer: () {}, child: MacrosTab(now: () => clock))));
+    await tester.pumpWidget(
+        host(ShellNav(openDrawer: () {}, child: MacrosTab(now: () => clock))));
     await tester.pumpAndSettle();
 
     await tester.tap(find.byKey(const ValueKey('macros-prev-day')));
@@ -178,7 +179,8 @@ void main() {
           timestamp: base.add(const Duration(days: 2)).millisecondsSinceEpoch);
     });
 
-    await tester.pumpWidget(host(WeightChartScreen(now: () => DateTime(2026, 11, 20))));
+    await tester
+        .pumpWidget(host(WeightChartScreen(now: () => DateTime(2026, 11, 20))));
     await tester.pumpAndSettle();
 
     final chart = tester.widget<LineChart>(find.byType(LineChart));
