@@ -69,6 +69,10 @@ Release candidate. Not yet tagged.
 
 ### Changed
 
+- Settings is now a two-step menu: the main screen lists categories (AI &
+  coaching, units & training, daily goals, Health Connect, notifications, your
+  data, about) and each opens its own page, instead of one long scroll of every
+  control.
 - The Diet tab's weekly tracker charts calories only; each bar is now stacked by
   the protein, carbs and fat behind that day's total, with a colour legend and a
   per-macro breakdown in every bar's screen-reader label (the metric switch is

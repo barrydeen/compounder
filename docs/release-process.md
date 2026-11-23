@@ -17,7 +17,8 @@ the pipeline and the decisions around it.
   disagree.
 - Pre-release tags carry a suffix (`v1.0.0-rc1`) and publish as GitHub
   pre-releases.
-- `lib/ui/settings.dart` (`appVersionLabel`) must match the semver part;
+- `lib/ui/settings/shared.dart` (`appVersionLabel`, re-exported from
+  `lib/ui/settings.dart`) must match the semver part;
   `test/backlog_minors_test.dart` fails if it drifts.
 
 ## Signing material

@@ -133,7 +133,7 @@ lib/
 └── ui/                  shell (bottom bar: Home, Fitness, Macros, Wealth, Coach;
                           Mind is drawer-only), home, workout, picker, summary,
                           history, progress, macros, wealth, mind, coach chat,
-                          settings, widgets
+                          settings (hub + per-category pages), widgets
 ```
 
 ## License

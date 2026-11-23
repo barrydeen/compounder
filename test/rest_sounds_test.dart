@@ -417,6 +417,9 @@ void main() {
       ));
       await tester.pump();
       await tester.pump();
+      // Settings is a two-step menu: the mute switch lives under Training.
+      await tester.tap(find.text('Units & training'));
+      await tester.pumpAndSettle();
 
       final tile = find.widgetWithText(SwitchListTile, 'Workout sounds');
       await tester.ensureVisible(tile);

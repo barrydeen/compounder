@@ -377,6 +377,9 @@ void main() {
         ),
       ));
       await tester.pumpAndSettle();
+      // Settings is a two-step menu: the trial copy lives on the AI page.
+      await tester.tap(find.text('AI & coaching'));
+      await tester.pumpAndSettle();
 
       // The wiring at settings.dart must pass the cached trial, not a stale or
       // null entitlement: a trial is access without a completed purchase.

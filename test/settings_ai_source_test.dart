@@ -100,6 +100,9 @@ void main() {
     ));
     await tester.pump();
     await tester.pump();
+    // Settings is a two-step menu: open the AI page before asserting on it.
+    await tester.tap(find.text('AI & coaching'));
+    await tester.pumpAndSettle();
   }
 
   testWidgets('BYO endpoint fields are hidden while the gateway is selected',

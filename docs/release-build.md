@@ -18,7 +18,8 @@ version: <major>.<minor>.<patch>+<buildNumber>
   rejects a re-used `versionCode` and App Store Connect rejects a re-used
   `CFBundleVersion` for the same version string.
 - Never reuse or decrement a build number, including for a rejected upload.
-- `lib/ui/settings.dart` (`appVersionLabel`) must match the semver part;
+- `lib/ui/settings/shared.dart` (`appVersionLabel`, re-exported from
+  `lib/ui/settings.dart`) must match the semver part;
   `test/backlog_minors_test.dart` fails if it drifts.
 - Tag releases in git as `v<semver>` (e.g. `v0.4.0`) once the artifact is
   uploaded.
