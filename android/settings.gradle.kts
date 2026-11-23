@@ -19,7 +19,7 @@ pluginManagement {
 
 plugins {
     id("dev.flutter.flutter-plugin-loader") version "1.0.0"
-    id("com.android.application") version "9.5.1" apply false
+    id("com.android.application") version "9.5.2" apply false
     // No legacy Kotlin Gradle Plugin (KGP) declaration here: AGP 9 provides
     // Kotlin support natively (android.builtInKotlin=true). Flutter is
     // removing KGP support.
