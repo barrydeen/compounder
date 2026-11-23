@@ -162,18 +162,21 @@ bool _usesIndex(String line) =>
 /// with. Plans on an empty table are identical to plans on a populated one for
 /// these queries, but seeding keeps the test honest if that ever changes.
 Future<void> _seedHotPathTables(Database db) async {
+  // One batch: ~1000 single inserts are ~1000 isolate round-trips through
+  // sqflite_common_ffi, which pushed this test past its 30 s timeout.
+  final batch = db.batch();
   for (var i = 0; i < 300; i++) {
-    await db.insert('workouts', {
+    batch.insert('workouts', {
       'name': 'w$i',
       'started_at': i * 1000,
       'ended_at': i * 1000 + 500,
     });
-    await db.insert('workout_exercises', {
+    batch.insert('workout_exercises', {
       'workout_id': (i % 300) + 1,
       'exercise_id': (i % 20) + 1,
       'position': i % 5,
     });
-    await db.insert('workout_sets', {
+    batch.insert('workout_sets', {
       'workout_exercise_id': (i % 300) + 1,
       'position': i % 5,
       'weight_kg': 50.0 + i,
@@ -181,7 +184,7 @@ Future<void> _seedHotPathTables(Database db) async {
       'completed_at': i * 1000,
       'is_warmup': 0,
     });
-    await db.insert('meals', {
+    batch.insert('meals', {
       'timestamp': i * 60000,
       'dish': 'd$i',
       'calories': 400.0,
@@ -189,14 +192,14 @@ Future<void> _seedHotPathTables(Database db) async {
       'carbs': 50.0,
       'fat': 8.0,
     });
-    await db.insert('reminders', {
+    batch.insert('reminders', {
       'text': 'r$i',
       'due_at': i * 60000,
       'created_at': i * 1000,
     });
   }
   for (var i = 0; i < 40; i++) {
-    await db.insert('accounts', {
+    batch.insert('accounts', {
       'name': 'a$i',
       'type': i % 5 == 0 ? 'Debt' : 'Cash',
       'balance': 1000.0 * i,
@@ -204,7 +207,7 @@ Future<void> _seedHotPathTables(Database db) async {
     });
   }
   for (var i = 0; i < 300; i++) {
-    await db.insert('balance_snapshots', {
+    batch.insert('balance_snapshots', {
       'account_id': (i % 40) + 1,
       'balance': 1000.0 * (i % 40),
       'taken_at': i * 60000,
@@ -219,9 +222,9 @@ Future<void> _seedHotPathTables(Database db) async {
     'created_at': 0,
   });
   for (var i = 0; i < 300; i++) {
-    await db.insert('moods', {'timestamp': i * 60000, 'mood': 4});
-    await db.insert('meditations', {'timestamp': i * 60000, 'minutes': 10});
-    await db.insert('thought_records', {
+    batch.insert('moods', {'timestamp': i * 60000, 'mood': 4});
+    batch.insert('meditations', {'timestamp': i * 60000, 'minutes': 10});
+    batch.insert('thought_records', {
       'timestamp': i * 60000,
       'situation': 's$i',
       'thought': 't$i',
@@ -229,7 +232,7 @@ Future<void> _seedHotPathTables(Database db) async {
   }
   for (var i = 0; i < 28; i++) {
     final day = DateTime(2025, 1, 1 + i);
-    await db.insert('habit_completions', {
+    batch.insert('habit_completions', {
       'habit_id': habitId,
       'day': '${day.year.toString().padLeft(4, '0')}-'
           '${day.month.toString().padLeft(2, '0')}-'
@@ -242,7 +245,7 @@ Future<void> _seedHotPathTables(Database db) async {
   // cardinality.
   for (var i = 0; i < 60; i++) {
     final day = DateTime(2026, 11, 1 + (i % 9));
-    await db.insert('plan_blocks', {
+    batch.insert('plan_blocks', {
       'day': '${day.year.toString().padLeft(4, '0')}-'
           '${day.month.toString().padLeft(2, '0')}-'
           '${day.day.toString().padLeft(2, '0')}',
@@ -254,6 +257,7 @@ Future<void> _seedHotPathTables(Database db) async {
       'position': i,
     });
   }
+  await batch.commit(noResult: true);
 }
 
 void main() {
