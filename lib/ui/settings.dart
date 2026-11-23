@@ -757,6 +757,55 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ]),
           ),
           const SizedBox(height: 16),
+          const SectionHeader('Streak rescue reminder'),
+          const SizedBox(height: 8),
+          Card(
+            color: scheme.surfaceContainerLow,
+            child: Column(children: [
+              SwitchListTile(
+                title: const Text('Protect my streak'),
+                subtitle: const Text(
+                    'An evening nudge when nothing has been logged today and a streak is on the line — a meal, a mood check-in, a set or a habit tick keeps it alive. Withdrawn automatically once you log something. Scheduled on this device.'),
+                value: store.coachStreakEnabled,
+                onChanged: (v) async {
+                  await store.setCoachStreak(enabled: v);
+                  await notify.rescheduleStreak(store);
+                },
+              ),
+              ListTile(
+                title: const Text('Delivery time'),
+                subtitle: const Text('When the streak is still unlogged'),
+                trailing: Text(clock(store.coachStreakMinutes),
+                    style: t.titleMedium?.copyWith(color: scheme.primary)),
+                onTap: () async {
+                  final picked = await showTimePicker(
+                    context: context,
+                    initialTime: TimeOfDay(
+                        hour: store.coachStreakMinutes ~/ 60,
+                        minute: store.coachStreakMinutes % 60),
+                  );
+                  if (picked != null) {
+                    await store.setCoachStreak(
+                        minutes: picked.hour * 60 + picked.minute);
+                    await notify.rescheduleStreak(store);
+                  }
+                },
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                child: OutlinedButton.icon(
+                  icon: const Icon(Icons.local_fire_department_outlined,
+                      size: 18),
+                  label: const Text('Send test streak reminder'),
+                  onPressed: () async {
+                    await notify.testStreakNotification(store);
+                    if (context.mounted) snack('Streak reminder sent');
+                  },
+                ),
+              ),
+            ]),
+          ),
+          const SizedBox(height: 16),
           const SectionHeader('Reminders'),
           const SizedBox(height: 8),
           Card(

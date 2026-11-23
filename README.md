@@ -47,6 +47,10 @@ tracking) and expands it into one place for every area of life you want to get 1
   usual wake-up learned out of the on-device Health Connect sleep records (median of recent
   completed nights, with a fallback time you choose until enough nights exist). It re-learns after
   each health sync, so it follows a changing routine. Also scheduled entirely on-device.
+- **Streak rescue reminder**: a 19:00 nudge (on by default) that only exists on an evening when
+  nothing has been logged yet and a streak is on the line. It names the streak and the smallest
+  ways to keep it (a meal, a mood check-in, a set, a habit tick), and any log withdraws it
+  immediately. Scheduled and re-evaluated entirely on-device.
 
 ## Trust and privacy
 
@@ -112,8 +116,8 @@ flutter run --dart-define=LLM_BASE_URL=http://192.168.0.117:4000/v1 \
 - **AI** — `llm/llm.dart` (OpenAI-compatible chat + tool calling + vision meal analysis),
   `coach/agent.dart` (tool loop), `coach/tools.dart` (24 tools across all domains).
 - **Domain** — pure, unit-tested math in `domain/domain.dart` (e1RM, units, wealth, mind streaks).
-- **Services** — JSON backup export/import, on-device daily check-in and wake-up reminder
-  scheduling.
+- **Services** — JSON backup export/import, on-device daily check-in, wake-up reminder and
+  streak-rescue notification scheduling.
 
 ```
 lib/

@@ -22,6 +22,15 @@ Release candidate. Not yet tagged.
   user-chosen fallback until enough nights exist. It names the first open plan
   block, or asks for a plan when the day has none, and re-learns the time after
   each health sync. Settings shows the learned time and offers a test send.
+- **Streak rescue reminder** — a 19:00 notification that fires only when nothing
+  has been logged today and a streak is on the line (on by default, since it
+  cannot nag a user who has nothing to protect). It names the streak and the
+  smallest ways to keep it (a meal, a mood check-in, a set or a habit tick). The
+  reminder is one pending OS notification recomputed on launch, resume and after
+  any log write, so logging anything withdraws tonight's nudge and moves the
+  next one to tomorrow; nothing is scheduled when the streak is already broken
+  or has not started. Settings offers an off switch, a delivery time and a test
+  send.
 - **App icon and in-app mark** — a compounding-spiral logo replaces the default
   Flutter launcher icon on Android and iOS (legacy and adaptive icons, including
   an Android 13 themed-icon silhouette), and the same mark appears in the home

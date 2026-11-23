@@ -781,6 +781,23 @@ class AppStore extends ChangeNotifier implements DeviceTokenStore {
     notifyListeners();
   }
 
+  /// The evening "your streak is at risk" rescue reminder.
+  ///
+  /// On by default, unlike the other two notifications: it is only ever
+  /// scheduled when a streak actually exists and today is still unlogged, so it
+  /// cannot nag a user who has nothing to protect. Defaults to 19:00 so the day
+  /// has had its chance to be logged before the nudge.
+  bool get coachStreakEnabled => prefs.getBool('coachStreakEnabled') ?? true;
+  int get coachStreakMinutes => prefs.getInt('coachStreakMinutes') ?? 19 * 60;
+
+  Future<void> setCoachStreak({bool? enabled, int? minutes}) async {
+    if (enabled != null) await prefs.setBool('coachStreakEnabled', enabled);
+    if (minutes != null) {
+      await prefs.setInt('coachStreakMinutes', minutes.clamp(0, 24 * 60 - 1));
+    }
+    notifyListeners();
+  }
+
   // ------------------------------------------------------------ workouts
 
   Future<Workout?> activeWorkout() async {

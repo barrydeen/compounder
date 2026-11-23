@@ -39,6 +39,10 @@ Future<void> main() async {
   // Never block startup on notification scheduling or health sync: both can
   // touch slow platform services, and the AI endpoint may be unreachable.
   unawaited(notify.rescheduleDaily(store));
+  // Withdraw the evening streak reminder as soon as a log lands, so a user who
+  // has already logged something is not told their streak is at risk.
+  notify.followStore(store);
+  unawaited(notify.rescheduleStreak(store));
   // The wake-up reminder is learned from sleep records, so sync first and then
   // schedule it from the freshest nights. Both are best-effort: a health or
   // notification failure must never take down startup.

@@ -47,7 +47,9 @@ class _ShellScreenState extends State<ShellScreen> with WidgetsBindingObserver {
 
   /// Syncs sleep, then re-learns the wake-up reminder time from the new
   /// records. Running this on launch and on resume is what lets the reminder
-  /// follow a changing routine instead of freezing at the first estimate.
+  /// follow a changing routine instead of freezing at the first estimate. The
+  /// streak reminder is recomputed here too: a resume can cross midnight, so
+  /// tonight's reminder has to be re-aimed at the new day.
   Future<void> _syncAndRescheduleMorning() async {
     try {
       await context.read<HealthService>().syncIfDue();
@@ -59,6 +61,14 @@ class _ShellScreenState extends State<ShellScreen> with WidgetsBindingObserver {
       // Sync and notifications are best-effort: a platform or permission
       // failure must not break the shell, and widget tests have no
       // notification plugin.
+    }
+    if (!mounted) return;
+    try {
+      await context
+          .read<NotifyService>()
+          .rescheduleStreak(context.read<AppStore>());
+    } catch (_) {
+      // Same best-effort contract as above.
     }
   }
 

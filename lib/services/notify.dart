@@ -8,6 +8,7 @@ import 'package:timezone/timezone.dart' as tz;
 
 import '../data/models.dart';
 import '../data/store.dart';
+import '../domain/activity.dart';
 import '../domain/domain.dart';
 import '../domain/habits.dart';
 import '../domain/plan.dart';
@@ -24,6 +25,15 @@ const _id = 42;
 /// Notification id for the wake-up planning reminder. Distinct from [_id] and
 /// from the reminder ids (1000+), so scheduling one never replaces the other.
 const _morningId = 44;
+
+/// Notification id for the evening streak-rescue reminder. Also distinct from
+/// the other two, so all three can be pending at once.
+const _streakId = 45;
+
+/// How far back the streak is measured for the rescue reminder. A year is
+/// longer than any streak worth quoting, and the query cost does not grow with
+/// the range (it is five indexed range scans regardless of the window).
+const _streakLookbackDays = 366;
 
 /// How many days of sleep are considered when learning a wake-up time. Two
 /// weeks is long enough to smooth out one late night without following a
@@ -118,10 +128,24 @@ DateTime nextDigestAt(DateTime now, int coachMinutes) {
   return DateTime(now.year, now.month, now.day + 1, hour, minute);
 }
 
+/// A pending streak-rescue reminder: when it fires and the streak it quotes.
+class StreakReminder {
+  final DateTime when;
+  final int streak;
+
+  const StreakReminder(this.when, this.streak);
+}
+
 class NotifyService {
   final FlutterLocalNotificationsPlugin _plugin =
       FlutterLocalNotificationsPlugin();
   bool _ready = false;
+
+  /// The store whose writes keep the streak reminder current ([followStore]).
+  AppStore? _followed;
+
+  /// Coalesces a burst of log writes into one streak-reschedule.
+  Timer? _writeDebounce;
 
   /// Median wake-up time (minutes after local midnight) across completed
   /// nights.
@@ -384,6 +408,66 @@ class NotifyService {
     return buildMorningDigest(plan: plan);
   }
 
+  /// The streak-rescue message: the streak that tonight would end, and the
+  /// smallest ways to keep it.
+  ///
+  /// It names concrete one-tap actions (a meal, a mood check-in, a set, a habit
+  /// tick) instead of "log something": the nudge only works if the user can see
+  /// the smallest step, and any pillar keeps the streak alive.
+  static String buildStreakDigest(int streak) {
+    final lead = streak > 1
+        ? 'Your $streak-day streak is on the line: nothing is logged today.'
+        : 'Your streak is on the line: nothing is logged today.';
+    return '$lead Log one thing — a meal, a mood check-in, a set or a habit '
+        'tick — and it keeps counting.';
+  }
+
+  /// When the streak-rescue reminder should fire, or null when there is no
+  /// streak to protect.
+  ///
+  /// "Logged" is the app's own pillar definition ([PillarDay.pillarCount]), so
+  /// this agrees with the home heatmap and [currentStreak]. When today already
+  /// has a log, the next evening that could break the streak is tomorrow;
+  /// otherwise it is today at [minutes] when that is still ahead.
+  ///
+  /// The quoted streak is the run ending today when today is logged, or ending
+  /// yesterday when it is not — exactly the streak the next unlogged evening
+  /// would break. It stays accurate at fire time because a log before then
+  /// withdraws the reminder.
+  @visibleForTesting
+  static StreakReminder? streakReminderFor(
+      Map<String, PillarDay> days, DateTime now, int minutes) {
+    final today = days[localDayKey(now)];
+    final loggedToday = today != null && today.pillarCount > 0;
+    final streak = currentStreak(days, now);
+    // Nothing logged today and nothing behind it: there is no streak yet, so
+    // an evening nudge would be nagging rather than protecting anything.
+    if (streak == 0) return null;
+    final hour = minutes ~/ 60;
+    final minute = minutes % 60;
+    final when = loggedToday
+        ? DateTime(now.year, now.month, now.day + 1, hour, minute)
+        : nextDigestAt(now, minutes);
+    return StreakReminder(when, streak);
+  }
+
+  /// [streakReminderFor] with the pillar activity loaded from the database.
+  ///
+  /// The window ends tomorrow so a reminder scheduled for tomorrow can see
+  /// today's log; it starts [_streakLookbackDays] back, which bounds the streak
+  /// walk by the history it is built from.
+  @visibleForTesting
+  Future<StreakReminder?> nextStreakReminder(AppStore store,
+      {DateTime? now}) async {
+    final anchor = now ?? DateTime.now();
+    final from =
+        DateTime(anchor.year, anchor.month, anchor.day - _streakLookbackDays);
+    final to = DateTime(anchor.year, anchor.month, anchor.day + 1);
+    final days = await store.dailyPillarActivity(from, to);
+    return NotifyService.streakReminderFor(
+        days, anchor, store.coachStreakMinutes);
+  }
+
   /// The user's usual wake-up time (minutes after local midnight), learned from
   /// imported Health Connect sleep, or null when there is not enough data.
   Future<int?> learnedWakeMinutes(AppStore store, {DateTime? now}) async {
@@ -480,9 +564,81 @@ class NotifyService {
         tz.TZDateTime.from(when, tz.local));
   }
 
+  /// Schedules — or withdraws — the evening streak-rescue reminder.
+  ///
+  /// A scheduled OS notification cannot re-evaluate its condition when it
+  /// fires, so this is the whole trick: one reminder is pending for the next
+  /// evening on which a live streak could break. It is recomputed on launch, on
+  /// resume and after every log write ([followStore]); when today's log lands
+  /// tonight's reminder is withdrawn and the next one moves to tomorrow.
+  ///
+  /// Nothing is scheduled when there is no streak behind today, so a brand-new
+  /// user is not nagged every evening for the sake of a streak that does not
+  /// exist yet.
+  Future<void> rescheduleStreak(AppStore store) async {
+    await init();
+    if (!store.coachStreakEnabled) {
+      await _plugin.cancel(id: _streakId);
+      return;
+    }
+    final reminder = await nextStreakReminder(store);
+    if (reminder == null) {
+      await _plugin.cancel(id: _streakId);
+      return;
+    }
+    await _schedule(
+      _streakId,
+      'Compounder: streak at risk',
+      NotifyService.buildStreakDigest(reminder.streak),
+      tz.TZDateTime.from(reminder.when, tz.local),
+    );
+  }
+
+  /// Keeps the streak-rescue reminder honest as logs arrive.
+  ///
+  /// Every store write — a meal, a mood, a set, a habit tick, a plan block —
+  /// notifies the store, and any of them can light a pillar and disarm tonight's
+  /// reminder. The listener is debounced so a burst of writes (a workout's sets)
+  /// does one reschedule instead of dozens. Best-effort: a platform failure in
+  /// the timer must never surface as an app error.
+  void followStore(AppStore store) {
+    if (identical(store, _followed)) return;
+    _followed?.removeListener(_onStoreWrite);
+    _followed = store;
+    store.addListener(_onStoreWrite);
+  }
+
+  void _onStoreWrite() {
+    final store = _followed;
+    if (store == null) return;
+    _writeDebounce?.cancel();
+    _writeDebounce = Timer(const Duration(seconds: 2), () {
+      unawaited(() async {
+        try {
+          await rescheduleStreak(store);
+        } catch (_) {
+          // Notification scheduling is best-effort, like every other call.
+        }
+      }());
+    });
+  }
+
   Future<void> _scheduleDaily(
-      int id, String title, String body, tz.TZDateTime when) async {
+          int id, String title, String body, tz.TZDateTime when) =>
+      _schedule(id, title, body, when, repeatDaily: true);
+
+  /// Schedules one notification, repeating daily at its wall-clock time when
+  /// [repeatDaily], and falls back to an inexact alarm when the OS denies exact
+  /// ones.
+  Future<void> _schedule(
+    int id,
+    String title,
+    String body,
+    tz.TZDateTime when, {
+    bool repeatDaily = false,
+  }) async {
     final details = _details(body, title: title);
+    final match = repeatDaily ? DateTimeComponents.time : null;
     try {
       await _plugin.zonedSchedule(
         id: id,
@@ -491,7 +647,7 @@ class NotifyService {
         scheduledDate: when,
         notificationDetails: details,
         androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
-        matchDateTimeComponents: DateTimeComponents.time,
+        matchDateTimeComponents: match,
       );
     } catch (_) {
       // Exact alarms can be denied by the OS; fall back to an inexact schedule.
@@ -502,7 +658,7 @@ class NotifyService {
         scheduledDate: when,
         notificationDetails: details,
         androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
-        matchDateTimeComponents: DateTimeComponents.time,
+        matchDateTimeComponents: match,
       );
     }
   }
@@ -576,5 +732,19 @@ class NotifyService {
     await init();
     await _showNow(await buildMorningCheckIn(store),
         id: _morningId + 1, title: 'Compounder: plan your day');
+  }
+
+  /// Shows the streak-rescue message now, using the live streak when there is
+  /// one so the user can judge the real wording before trusting it.
+  Future<void> testStreakNotification(AppStore store) async {
+    await init();
+    int streak = 0;
+    try {
+      streak = (await nextStreakReminder(store))?.streak ?? 0;
+    } catch (_) {
+      // A preview must still appear when the activity query fails.
+    }
+    await _showNow(NotifyService.buildStreakDigest(streak),
+        id: _streakId + 1, title: 'Compounder: streak at risk');
   }
 }
