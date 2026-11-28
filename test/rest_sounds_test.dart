@@ -3,6 +3,7 @@ import 'package:compounder/health/repository.dart';
 import 'package:compounder/health/service.dart';
 import 'package:compounder/services/notify.dart';
 import 'package:compounder/services/rest_sounds.dart';
+import 'package:compounder/services/rest_timer_background.dart';
 import 'package:compounder/ui/settings.dart';
 import 'package:compounder/ui/widgets.dart';
 import 'package:compounder/ui/workout.dart';
@@ -87,6 +88,29 @@ class _FakeWorkoutSounds implements WorkoutSounds {
   }
 }
 
+class _FakeRestTimerBackground implements RestTimerBackground {
+  final List<DateTime> starts = [];
+  final List<int> stops = [];
+  VoidCallback? _onCancelled;
+
+  @override
+  Future<void> start({required DateTime endAt}) async {
+    starts.add(endAt);
+  }
+
+  @override
+  Future<void> stop({int graceMs = 0}) async {
+    stops.add(graceMs);
+  }
+
+  @override
+  void setCancelHandler(VoidCallback? onCancelled) {
+    _onCancelled = onCancelled;
+  }
+
+  void simulateNotificationCancel() => _onCancelled?.call();
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   sqfliteFfiInit();
@@ -168,12 +192,21 @@ void main() {
   });
 
   Future<void> pumpWorkout(
-      WidgetTester tester, _FakeWorkoutSounds sounds) async {
+    WidgetTester tester,
+    _FakeWorkoutSounds sounds, {
+    RestTimerBackground? restBackground,
+    DateTime Function()? now,
+  }) async {
     await tester.pumpWidget(ChangeNotifierProvider<AppStore>.value(
       value: store,
       child: MaterialApp(
         theme: CompounderTheme.dark(),
-        home: WorkoutScreen(workoutId: workoutId, sounds: sounds),
+        home: WorkoutScreen(
+          workoutId: workoutId,
+          sounds: sounds,
+          restBackground: restBackground,
+          now: now,
+        ),
       ),
     ));
     // The detail query hits sqflite_common_ffi, which needs real async time.
@@ -350,6 +383,164 @@ void main() {
         reason: 'a disposed screen must not fire a stale cue');
     expect(sounds.disposed, isTrue,
         reason: 'the audio players are released with the screen');
+  });
+
+  group('background rest timer and lifecycle', () {
+    void minimize(WidgetTester tester) {
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    }
+
+    void resume(WidgetTester tester) {
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    }
+
+    testWidgets(
+        'starts background keep-alive on set complete and stops with grace at zero',
+        (tester) async {
+      await seed(restSeconds: 7);
+      final sounds = _FakeWorkoutSounds();
+      final bg = _FakeRestTimerBackground();
+      var clock = DateTime(2026, 11, 28, 10, 0, 0);
+      await pumpWorkout(tester, sounds, restBackground: bg, now: () => clock);
+
+      await completeSet(tester);
+      expect(bg.starts, [DateTime(2026, 11, 28, 10, 0, 7)],
+          reason: 'background service starts with the wall-clock deadline');
+      expect(bg.stops, isEmpty);
+
+      // Minimizing the app must not stop the countdown or mute cues.
+      minimize(tester);
+      addTearDown(() => resume(tester));
+      await tester.pump();
+      for (var i = 0; i < 7; i++) {
+        clock = clock.add(const Duration(seconds: 1));
+        await tester.pump(const Duration(seconds: 1));
+      }
+
+      expect(sounds.played,
+          [...List.filled(5, WorkoutCue.countdownTick), WorkoutCue.go],
+          reason: 'countdown ticks and go tone still fire while minimized');
+      expect(bg.stops, hasLength(1));
+      expect(bg.stops.single, greaterThan(0),
+          reason:
+              'stopping after the go tone keeps a brief grace window for audio');
+    });
+
+    testWidgets(
+        'resuming after OS suspension catches up to wall-clock time without duplicate ticks',
+        (tester) async {
+      await seed(restSeconds: 30);
+      final sounds = _FakeWorkoutSounds();
+      final bg = _FakeRestTimerBackground();
+      var clock = DateTime(2026, 11, 28, 10, 0, 0);
+      await pumpWorkout(tester, sounds, restBackground: bg, now: () => clock);
+
+      await completeSet(tester);
+      expect(find.text('0:30'), findsOneWidget);
+
+      // Simulate the app being minimized and frozen for 27 seconds with zero
+      // timer callbacks firing, then resumed with 3 seconds remaining.
+      minimize(tester);
+      clock = clock.add(const Duration(seconds: 27));
+      resume(tester);
+      await tester.pump();
+
+      expect(find.text('0:03'), findsOneWidget,
+          reason: 'resuming snaps the countdown to the true wall-clock time');
+      expect(sounds.played, [WorkoutCue.countdownTick],
+          reason: 'resuming inside the 5s window fires one tick for 3s left');
+
+      // Minimizing and resuming again within the same second must not
+      // double-tick.
+      minimize(tester);
+      resume(tester);
+      await tester.pump();
+      expect(sounds.played, [WorkoutCue.countdownTick]);
+
+      // Remaining 3 -> 2 -> 1 -> 0 completes cleanly.
+      for (var i = 0; i < 3; i++) {
+        clock = clock.add(const Duration(seconds: 1));
+        await tester.pump(const Duration(seconds: 1));
+      }
+      expect(sounds.played, [
+        WorkoutCue.countdownTick,
+        WorkoutCue.countdownTick,
+        WorkoutCue.countdownTick,
+        WorkoutCue.go,
+      ]);
+      expect(find.byType(ActionChip), findsNothing);
+    });
+
+    testWidgets(
+        'resuming after the deadline passed finishes the rest and fires go once',
+        (tester) async {
+      await seed(restSeconds: 20);
+      final sounds = _FakeWorkoutSounds();
+      final bg = _FakeRestTimerBackground();
+      var clock = DateTime(2026, 11, 28, 10, 0, 0);
+      await pumpWorkout(tester, sounds, restBackground: bg, now: () => clock);
+
+      await completeSet(tester);
+      expect(find.text('0:20'), findsOneWidget);
+
+      minimize(tester);
+      clock = clock.add(const Duration(seconds: 45));
+      resume(tester);
+      await tester.pump();
+
+      expect(find.byType(ActionChip), findsNothing);
+      expect(sounds.played, [WorkoutCue.go]);
+      expect(bg.stops, hasLength(1));
+
+      // A second minimize/resume does not replay the go tone.
+      minimize(tester);
+      resume(tester);
+      await tester.pump();
+      expect(sounds.played, [WorkoutCue.go]);
+    });
+
+    testWidgets(
+        'cancelling from the chip or notification stops the background service immediately',
+        (tester) async {
+      await seed(restSeconds: 30);
+      final sounds = _FakeWorkoutSounds();
+      final bg = _FakeRestTimerBackground();
+      await pumpWorkout(tester, sounds, restBackground: bg);
+
+      // 1. Cancel from the in-app chip.
+      await completeSet(tester);
+      await tester.tap(find.byType(ActionChip));
+      await tester.pump();
+      expect(bg.stops, [0],
+          reason: 'cancelling stops the background service with no grace');
+
+      // 2. Cancel from the Android notification action.
+      await completeSet(tester);
+      expect(find.byType(ActionChip), findsOneWidget);
+      bg.simulateNotificationCancel();
+      await tester.pump();
+      expect(find.byType(ActionChip), findsNothing,
+          reason: 'notification cancel clears the in-app rest chip');
+      await tester.pump(const Duration(seconds: 35));
+      expect(sounds.played, isEmpty);
+    });
+
+    testWidgets('disposing the screen mid-rest stops the background service',
+        (tester) async {
+      await seed(restSeconds: 30);
+      final sounds = _FakeWorkoutSounds();
+      final bg = _FakeRestTimerBackground();
+      await pumpWorkout(tester, sounds, restBackground: bg);
+
+      await completeSet(tester);
+      await tester.pumpWidget(const SizedBox.shrink());
+      expect(bg.stops, [0],
+          reason: 'disposing mid-rest releases the background service');
+    });
   });
 
   group('cue assets', () {

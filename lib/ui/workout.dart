@@ -7,6 +7,7 @@ import '../data/models.dart';
 import '../data/store.dart';
 import '../domain/domain.dart';
 import '../services/rest_sounds.dart';
+import '../services/rest_timer_background.dart';
 import 'picker.dart';
 import 'summary.dart';
 import 'widgets.dart';
@@ -18,13 +19,27 @@ class WorkoutScreen extends StatefulWidget {
   /// audioplayers-backed implementation.
   final WorkoutSounds? sounds;
 
-  const WorkoutScreen({super.key, required this.workoutId, this.sounds});
+  /// Injectable background keep-alive for the rest timer; tests pass a fake.
+  /// Defaults to the Android foreground-service channel (a no-op elsewhere).
+  final RestTimerBackground? restBackground;
+
+  /// Injectable clock for the rest deadline; defaults to [DateTime.now].
+  final DateTime Function()? now;
+
+  const WorkoutScreen({
+    super.key,
+    required this.workoutId,
+    this.sounds,
+    this.restBackground,
+    this.now,
+  });
 
   @override
   State<WorkoutScreen> createState() => _WorkoutScreenState();
 }
 
-class _WorkoutScreenState extends State<WorkoutScreen> {
+class _WorkoutScreenState extends State<WorkoutScreen>
+    with WidgetsBindingObserver {
   AppStore? _store;
   WorkoutDetail? _detail;
   bool _loading = true;
@@ -34,9 +49,21 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
   final Map<int, FocusNode> _weightFocus = {};
   final Map<int, FocusNode> _repsFocus = {};
   final Map<int, WorkoutSet> _setsById = {};
+  final List<ChangeNotifier> _retiredDisposables = [];
+  final Set<int> _removingSetIds = {};
 
   final ValueNotifier<int> _restLeft = ValueNotifier(0);
   Timer? _restTimer;
+
+  /// Wall-clock deadline for the active rest countdown, or null when idle.
+  /// Checked on every tick and on app resume so minimizing or OS throttling
+  /// can never leave the countdown frozen behind real time.
+  DateTime? _restEndAt;
+
+  /// Smallest remaining-second mark whose countdown tick has already fired for
+  /// the current rest. Prevents duplicate ticks if a lifecycle resume and a
+  /// periodic tick land within the same second.
+  int? _lastTickedSecond;
 
   /// The workout-exercise whose sets are open. Only one card is open at a time
   /// (owner request): the screen exists to log one exercise at a time, and two
@@ -51,18 +78,37 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
   int _restGeneration = 0;
 
   late final WorkoutSounds _sounds;
+  late final RestTimerBackground _restBackground;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _store = context.read<AppStore>();
     _sounds = widget.sounds ?? AudioWorkoutSounds();
+    _restBackground =
+        widget.restBackground ?? MethodChannelRestTimerBackground();
+    _restBackground.setCancelHandler(() {
+      if (mounted) _cancelRest(stopBackground: false);
+    });
     _loadDetail();
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && mounted) {
+      _syncRestFromClock();
+    }
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _restBackground.setCancelHandler(null);
+    if (_restEndAt != null) unawaited(_restBackground.stop());
     _restTimer?.cancel();
+    _restEndAt = null;
+    _lastTickedSecond = null;
     _restGeneration++;
     _restLeft.dispose();
     unawaited(_sounds.dispose());
@@ -78,7 +124,17 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
     for (final node in _repsFocus.values) {
       node.dispose();
     }
+    _disposeRetired();
     super.dispose();
+  }
+
+  void _disposeRetired() {
+    if (_retiredDisposables.isEmpty) return;
+    final toDispose = List<ChangeNotifier>.of(_retiredDisposables);
+    _retiredDisposables.clear();
+    for (final disposable in toDispose) {
+      disposable.dispose();
+    }
   }
 
   Future<void> _loadDetail() async {
@@ -153,13 +209,25 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
         }
       }
     }
+    final retired = <ChangeNotifier>[];
     for (final id in _weightControllers.keys.toList()) {
       if (active.contains(id)) continue;
-      _weightControllers.remove(id)?.dispose();
-      _repsControllers.remove(id)?.dispose();
-      _weightFocus.remove(id)?.dispose();
-      _repsFocus.remove(id)?.dispose();
+      final weightController = _weightControllers.remove(id);
+      final repsController = _repsControllers.remove(id);
+      final weightNode = _weightFocus.remove(id);
+      final repsNode = _repsFocus.remove(id);
       _setsById.remove(id);
+      if (weightController != null) retired.add(weightController);
+      if (repsController != null) retired.add(repsController);
+      if (weightNode != null) retired.add(weightNode);
+      if (repsNode != null) retired.add(repsNode);
+    }
+    if (retired.isNotEmpty) {
+      // Defer disposal until after this frame unmounts the removed TextFields;
+      // disposing synchronously inside setState trips ChangeNotifier assertions
+      // when EditableTextState.dispose detaches its listeners.
+      _retiredDisposables.addAll(retired);
+      WidgetsBinding.instance.addPostFrameCallback((_) => _disposeRetired());
     }
   }
 
@@ -232,18 +300,72 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
     if (reload) await _reloadDetail();
   }
 
+  DateTime _now() => widget.now?.call() ?? DateTime.now();
+
+  int _wallRemainingSeconds() {
+    final endAt = _restEndAt;
+    if (endAt == null) return 0;
+    final remainingMs = endAt.difference(_now()).inMilliseconds;
+    if (remainingMs <= 0) return 0;
+    return (remainingMs + 999) ~/ 1000;
+  }
+
+  void _applyRestRemaining(int next) {
+    final clamped = next < 0 ? 0 : next;
+    _restLeft.value = clamped;
+    if (clamped <= 0) {
+      _restTimer?.cancel();
+      _restTimer = null;
+      _restEndAt = null;
+      _lastTickedSecond = null;
+      _restGeneration++;
+      _playCue(WorkoutCue.go);
+      // Keep the foreground service / wake lock briefly while the ~230 ms "go"
+      // WAV finishes playing if the screen is off.
+      unawaited(_restBackground.stop(graceMs: 800));
+      return;
+    }
+    if (clamped <= 5 &&
+        (_lastTickedSecond == null || clamped < _lastTickedSecond!)) {
+      _lastTickedSecond = clamped;
+      _playCue(WorkoutCue.countdownTick);
+    }
+  }
+
+  void _syncRestFromClock() {
+    if (_restEndAt == null) return;
+    final wallLeft = _wallRemainingSeconds();
+    if (wallLeft < _restLeft.value) {
+      _applyRestRemaining(wallLeft);
+    }
+  }
+
   void _startRest() {
     final seconds = _store!.restSeconds;
     _restTimer?.cancel();
     _restGeneration++;
     _restLeft.value = seconds;
+    _lastTickedSecond = null;
+    if (seconds <= 0) {
+      _restEndAt = null;
+      unawaited(_restBackground.stop());
+      return;
+    }
+    final endAt = _now().add(Duration(seconds: seconds));
+    _restEndAt = endAt;
+    if (_sounds case final AudioWorkoutSounds audio) {
+      unawaited(audio.preload(WorkoutCue.countdownTick));
+      unawaited(audio.preload(WorkoutCue.go));
+    }
+    unawaited(_restBackground.start(endAt: endAt));
     final generation = _restGeneration;
     // One tick for every second of the final countdown (5, 4, 3, 2, 1), then
     // the distinct go tone at zero. A rest configured at or below five seconds
     // (the Settings minimum is 5s) starts inside the countdown window, so its
     // first tick fires now: waiting for the first timer tick would place it at
     // 4s remaining, one second late.
-    if (seconds > 0 && seconds <= 5) {
+    if (seconds <= 5) {
+      _lastTickedSecond = seconds;
       _playCue(WorkoutCue.countdownTick);
     }
     _restTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
@@ -251,23 +373,23 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
         timer.cancel();
         return;
       }
-      final next = _restLeft.value - 1;
-      _restLeft.value = next < 0 ? 0 : next;
-      if (next <= 0) {
-        timer.cancel();
-        _playCue(WorkoutCue.go);
-      } else if (next <= 5) {
-        _playCue(WorkoutCue.countdownTick);
-      }
+      final decremented = _restLeft.value - 1;
+      final wallLeft = _wallRemainingSeconds();
+      final next = wallLeft < decremented ? wallLeft : decremented;
+      _applyRestRemaining(next);
     });
   }
 
-  /// Cancels the rest timer without a cue (the user tapped the rest chip).
-  void _cancelRest() {
+  /// Cancels the rest timer without a cue (the user tapped the rest chip or
+  /// the background notification's Cancel action).
+  void _cancelRest({bool stopBackground = true}) {
     _restTimer?.cancel();
     _restTimer = null;
+    _restEndAt = null;
+    _lastTickedSecond = null;
     _restGeneration++;
     _restLeft.value = 0;
+    if (stopBackground) unawaited(_restBackground.stop());
   }
 
   /// Plays a workout cue unless the user muted workout sounds. The mute
@@ -325,6 +447,23 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
     await _reloadDetail();
   }
 
+  Future<void> _removeSet(WorkoutSet set) async {
+    if (!_removingSetIds.add(set.id)) return;
+    try {
+      // Flush any half-typed edits in sibling rows so removing one set never
+      // discards what the user typed into another.
+      final updates = _pendingUpdates().where((u) => u.id != set.id).toList();
+      for (final update in updates) {
+        await _store!
+            .updateSet(update.id, weightKg: update.weightKg, reps: update.reps);
+      }
+      await _store!.deleteSetRow(set.id);
+      await _reloadDetail();
+    } finally {
+      _removingSetIds.remove(set.id);
+    }
+  }
+
   Widget _restChip(ColorScheme scheme) {
     return ValueListenableBuilder<int>(
       valueListenable: _restLeft,
@@ -352,13 +491,17 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
       padding: const EdgeInsets.only(bottom: 4),
       child: Row(children: [
         SizedBox(width: 20, child: Text('#', style: style)),
-        SizedBox(
-          width: 70,
+        Expanded(
+          flex: 3,
           child: Text('Weight ($unitLabel)',
               style: style, maxLines: 1, overflow: TextOverflow.ellipsis),
         ),
         const SizedBox(width: 4),
-        SizedBox(width: 40, child: Text('Reps', style: style)),
+        Expanded(
+          flex: 2,
+          child: Text('Reps',
+              style: style, maxLines: 1, overflow: TextOverflow.ellipsis),
+        ),
         const SizedBox(width: 4),
         SizedBox(
             width: 48,
@@ -367,6 +510,7 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
         SizedBox(
             width: 48,
             child: Text('Done', style: style, textAlign: TextAlign.center)),
+        const SizedBox(width: 48),
       ]),
     );
   }
@@ -382,6 +526,7 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
     final repsNode = _focusFor(set.id, false);
     final done = set.completedAt != null;
     return Padding(
+      key: ValueKey('set-row-${set.id}'),
       padding: const EdgeInsets.symmetric(vertical: 3),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [
@@ -390,8 +535,8 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
             child: Text('${index + 1}',
                 style: t.bodyMedium?.copyWith(color: scheme.onSurfaceVariant)),
           ),
-          SizedBox(
-            width: 70,
+          Expanded(
+            flex: 3,
             child: TextField(
               controller: weightController,
               focusNode: weightNode,
@@ -409,8 +554,8 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
             ),
           ),
           const SizedBox(width: 4),
-          SizedBox(
-            width: 40,
+          Expanded(
+            flex: 2,
             child: TextField(
               controller: repsController,
               focusNode: repsNode,
@@ -446,6 +591,14 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
                 value: done,
                 onChanged: (_) => _toggleComplete(set),
               ),
+            ),
+          ),
+          SizedBox(
+            width: 48,
+            child: IconButton(
+              icon: Icon(Icons.close, size: 18, color: scheme.outline),
+              tooltip: 'Remove set ${index + 1}',
+              onPressed: () => _removeSet(set),
             ),
           ),
         ]),
@@ -703,11 +856,12 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
         ),
         if (expanded)
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+            padding: const EdgeInsets.fromLTRB(16, 0, 4, 8),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _setHeader(scheme, t, store.unit.label),
+                if (view.sets.isNotEmpty)
+                  _setHeader(scheme, t, store.unit.label),
                 ...view.sets.asMap().entries.map((entry) =>
                     _setRow(context, scheme, t, view, entry.key, entry.value)),
                 TextButton.icon(

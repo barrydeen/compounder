@@ -7,6 +7,9 @@
          permission is visible in the app's manifest. -->
     <uses-permission android:name="com.android.vending.BILLING"/>
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE"/>
+    <uses-permission android:name="android.permission.WAKE_LOCK"/>
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM"/>
     <uses-permission android:name="android.permission.USE_EXACT_ALARM"/>
     <!-- The daily check-in and wake-up reminder are scheduled notifications;
@@ -95,6 +98,16 @@
                 <category android:name="android.intent.category.HEALTH_PERMISSIONS" />
             </intent-filter>
         </activity-alias>
+        <!-- Keeps the active workout rest timer ticking and playing audio cues
+             while the app is minimized or the screen is off. -->
+        <service
+            android:name=".RestTimerService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Keeps an active workout rest timer running and plays countdown audio cues while the app is minimized." />
+        </service>
         <!-- Delivers a scheduled notification when its alarm fires. Since
              flutter_local_notifications 16 the plugin only declares the bare
              minimum permissions in its own manifest, so both receivers must be

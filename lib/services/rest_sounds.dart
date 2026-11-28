@@ -56,7 +56,7 @@ class AudioWorkoutSounds implements WorkoutSounds {
   final double volume;
 
   final Map<WorkoutCue, AudioPlayer> _players = {};
-  final Set<WorkoutCue> _loaded = {};
+  final Map<WorkoutCue, Future<AudioPlayer>> _loading = {};
   bool _disposed = false;
 
   static final AudioContext _context = AudioContext(
@@ -71,27 +71,46 @@ class AudioWorkoutSounds implements WorkoutSounds {
     ),
   );
 
+  Future<AudioPlayer?> _ensureLoaded(WorkoutCue cue) {
+    if (_disposed) return Future.value(null);
+    return _loading.putIfAbsent(cue, () async {
+      final player = _players.putIfAbsent(
+          cue, () => AudioPlayer(playerId: 'compounder-cue-${cue.name}'));
+      // Order matters: the audio context must be set before the source,
+      // because the low-latency backend builds its stream from the context
+      // when the source is loaded.
+      await player.setPlayerMode(PlayerMode.lowLatency);
+      await player.setReleaseMode(ReleaseMode.stop);
+      await player.setAudioContext(_context);
+      await player.setVolume(volume);
+      await player.setSource(AssetSource(cue.asset));
+      return player;
+    });
+  }
+
+  /// Warms [cue] in native audio memory while the app is still in the
+  /// foreground so it fires immediately later even if the app is minimized.
+  Future<void> preload(WorkoutCue cue) async {
+    if (_disposed) return;
+    try {
+      await _ensureLoaded(cue);
+    } catch (error) {
+      _loading.remove(cue);
+      debugPrint('workout cue ${cue.name} preload failed: $error');
+    }
+  }
+
   @override
   Future<void> play(WorkoutCue cue) async {
     if (_disposed) return;
     try {
-      final player = _players.putIfAbsent(
-          cue, () => AudioPlayer(playerId: 'compounder-cue-${cue.name}'));
-      if (!_loaded.contains(cue)) {
-        // Order matters: the audio context must be set before the source,
-        // because the low-latency backend builds its stream from the context
-        // when the source is loaded.
-        await player.setPlayerMode(PlayerMode.lowLatency);
-        await player.setReleaseMode(ReleaseMode.stop);
-        await player.setAudioContext(_context);
-        await player.setVolume(volume);
-        await player.setSource(AssetSource(cue.asset));
-        _loaded.add(cue);
-      }
+      final player = await _ensureLoaded(cue);
+      if (player == null || _disposed) return;
       // Rewind a cue that is still sounding, then fire it again.
       await player.stop();
       await player.resume();
     } catch (error) {
+      _loading.remove(cue);
       debugPrint('workout cue ${cue.name} failed: $error');
     }
   }
@@ -108,6 +127,6 @@ class AudioWorkoutSounds implements WorkoutSounds {
       }
     }
     _players.clear();
-    _loaded.clear();
+    _loading.clear();
   }
 }

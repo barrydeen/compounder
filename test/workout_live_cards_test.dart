@@ -256,4 +256,163 @@ void main() {
     expect(card('Sets · reps').value, '2 · 13',
         reason: 'work-up sets count as sets and reps in the session total');
   });
+
+  testWidgets('removing a newly added set deletes the row without error',
+      (tester) async {
+    await seed(secondExercise: false);
+    await pumpWorkout(tester);
+    expect(fieldsIn('Back squat'), findsNWidgets(2));
+
+    // User adds a set by mistake, then removes the second row.
+    await tester.tap(find.text('Add set'));
+    await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 200)));
+    await tester.pumpAndSettle();
+    expect(fieldsIn('Back squat'), findsNWidgets(4));
+    expect(find.byTooltip('Remove set 2'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Remove set 2'));
+    await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 200)));
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull,
+        reason: 'removing a set row must dispose its controllers cleanly');
+    expect(fieldsIn('Back squat'), findsNWidgets(2));
+    expect(find.byTooltip('Remove set 2'), findsNothing);
+    final detail = await tester.runAsync(() => store.workoutDetail(workoutId));
+    expect(detail!.exercises.single.sets, hasLength(1));
+  });
+
+  testWidgets(
+      'removing a middle set keeps unsaved sibling edits and renumbers rows',
+      (tester) async {
+    await seed(secondExercise: false);
+    final detail0 = await store.workoutDetail(workoutId);
+    final entryId = detail0!.exercises.single.entry.id;
+    await store.addSet(entryId, 110, 5, completed: false);
+    await store.addSet(entryId, 120, 3, completed: false);
+    await pumpWorkout(tester);
+
+    // Edit set 1's weight without unfocusing, then remove set 2 directly.
+    final weight1 = fieldsIn('Back squat').at(0);
+    await tester.enterText(weight1, '105');
+    await tester.pump();
+
+    await tester.tap(find.byTooltip('Remove set 2'));
+    await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 250)));
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+    expect(fieldsIn('Back squat'), findsNWidgets(4),
+        reason: 'two sets remain (4 text fields total)');
+    expect(find.byTooltip('Remove set 1'), findsOneWidget);
+    expect(find.byTooltip('Remove set 2'), findsOneWidget);
+    expect(find.byTooltip('Remove set 3'), findsNothing);
+
+    final detail = await tester.runAsync(() => store.workoutDetail(workoutId));
+    final sets = detail!.exercises.single.sets;
+    expect(
+        sets.map((s) => (s.weightKg, s.reps)).toList(),
+        [
+          (105.0, 5),
+          (120.0, 3),
+        ],
+        reason: 'sibling edits must be saved and the removed set dropped');
+  });
+
+  testWidgets('removing a completed set updates session totals and PR badges',
+      (tester) async {
+    await seed(secondExercise: false);
+    final detail0 = await store.workoutDetail(workoutId);
+    final entryId = detail0!.exercises.single.entry.id;
+    final set1Id = detail0.exercises.single.sets.single.id;
+    await store.updateSet(set1Id, completedAt: 1000);
+    await store.addSet(entryId, 110, 5, completed: true);
+    await pumpWorkout(tester);
+
+    StatCard card(String label) => tester.widget<StatCard>(
+        find.byWidgetPredicate((w) => w is StatCard && w.label == label));
+    // 100x5 + 110x5 = 1050 kg over 2 sets and 10 reps; both are PRs.
+    expect(card('Volume (kg)').value, '1050');
+    expect(card('Sets · reps').value, '2 · 10');
+    expect(find.textContaining('PR ·'), findsNWidgets(2));
+
+    await tester.tap(find.byTooltip('Remove set 2'));
+    await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 250)));
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+    expect(card('Volume (kg)').value, '500');
+    expect(card('Sets · reps').value, '1 · 5');
+    expect(find.textContaining('PR ·'), findsOneWidget);
+  });
+
+  testWidgets(
+      'removing the last remaining set hides the header and keeps Add set working',
+      (tester) async {
+    await seed(secondExercise: false);
+    await pumpWorkout(tester);
+
+    await tester.tap(find.byTooltip('Remove set 1'));
+    await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 200)));
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+    expect(fieldsIn('Back squat'), findsNothing);
+    expect(find.text('Weight (kg)'), findsNothing,
+        reason: 'empty set table should not leave a dangling header');
+    expect(find.text('Add set'), findsOneWidget);
+
+    await tester.tap(find.text('Add set'));
+    await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 200)));
+    await tester.pumpAndSettle();
+
+    expect(fieldsIn('Back squat'), findsNWidgets(2));
+    expect(find.text('Weight (kg)'), findsOneWidget);
+  });
+
+  testWidgets(
+      'set row with remove button fits 320dp/textScale 2.0 with a 48dp target',
+      (tester) async {
+    await seed(secondExercise: false);
+    tester.view.physicalSize = const Size(320, 640);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(ChangeNotifierProvider<AppStore>.value(
+      value: store,
+      child: MaterialApp(
+        theme: CompounderTheme.dark(),
+        builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(context)
+              .copyWith(textScaler: const TextScaler.linear(2.0)),
+          child: child!,
+        ),
+        home: WorkoutScreen(workoutId: workoutId, sounds: _FakeWorkoutSounds()),
+      ),
+    ));
+    await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 300)));
+    await tester.pump();
+    await tester.pump();
+
+    expect(tester.takeException(), isNull,
+        reason: 'the set row must not overflow at 320dp/textScale 2.0');
+    final removeButton = find.ancestor(
+        of: find.byTooltip('Remove set 1'), matching: find.byType(IconButton));
+    expect(removeButton, findsOneWidget);
+    final rect = tester.getRect(removeButton);
+    expect(rect.width, greaterThanOrEqualTo(48));
+    expect(rect.height, greaterThanOrEqualTo(48));
+    expect(rect.right, lessThanOrEqualTo(320.0));
+
+    // Dispose the tree so the periodic elapsed timer is cancelled.
+    await tester.pumpWidget(const SizedBox());
+  });
 }
