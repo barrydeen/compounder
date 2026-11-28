@@ -645,7 +645,11 @@ class _PlannerScreenState extends State<PlannerScreen>
               style: t.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
             ),
           ),
+        // Keyed so toggling the empty hint above or progress footer below does
+        // not shift Expanded to a different Column slot, remount the
+        // SingleChildScrollView, and reset the timeline back to 12:00 AM.
         Expanded(
+            key: const ValueKey('plan-timeline'),
             child: _timeline(context, isToday: isToday, nowMinute: nowMinute)),
         if (_blocks.isNotEmpty) _progress(context),
       ]),

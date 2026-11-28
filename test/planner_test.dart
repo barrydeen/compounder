@@ -802,4 +802,81 @@ void main() {
     expect(tester.takeException(), isNull);
     expect(find.textContaining('Nothing planned for this day'), findsOneWidget);
   });
+
+  testWidgets(
+      'creating the first block keeps the scroll position instead of jumping to 12am',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(400, 900));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(host());
+    await settle(tester);
+
+    // The screen auto-scrolls to noon (now = 12:00 PM). Tap an empty slot at
+    // 12:30 PM (750 minutes) and submit via Enter/done.
+    await tester.tapAt(Offset(200, gridY(tester, 750)));
+    await tester.pumpAndSettle();
+
+    final scrollable =
+        tester.state<ScrollableState>(find.byType(Scrollable).first);
+    final offsetBeforeCommit = scrollable.position.pixels;
+    expect(offsetBeforeCommit, greaterThan(500),
+        reason: 'precondition: the timeline must be scrolled down near noon');
+
+    await tester.enterText(find.byKey(const ValueKey('plan-inline')), 'Lunch');
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await settle(tester);
+
+    final scrollableAfter =
+        tester.state<ScrollableState>(find.byType(Scrollable).first);
+    expect(scrollableAfter.position.pixels, closeTo(offsetBeforeCommit, 1.0),
+        reason:
+            'creating the first block must not remount the timeline and jump to 12am');
+
+    final viewport = tester.getRect(find.byType(SingleChildScrollView));
+    final blockRect = tester.getRect(find.text('Lunch'));
+    expect(blockRect.top, greaterThanOrEqualTo(viewport.top),
+        reason: 'the newly created block must remain visible in the viewport');
+    expect(blockRect.bottom, lessThanOrEqualTo(viewport.bottom),
+        reason: 'the newly created block must remain visible in the viewport');
+  });
+
+  testWidgets('deleting the last block and undoing keeps the scroll position',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(400, 900));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    late int id;
+    await tester.runAsync(() async {
+      id = await store.createPlanBlock(
+          day: day, title: 'Lunch', startMin: 750, endMin: 780);
+    });
+    await tester.pumpWidget(host());
+    await settle(tester);
+
+    final offsetBefore = tester
+        .state<ScrollableState>(find.byType(Scrollable).first)
+        .position
+        .pixels;
+    expect(offsetBefore, greaterThan(500),
+        reason: 'precondition: the timeline must be scrolled down near noon');
+
+    await tester.longPress(find.byKey(ValueKey('plan-block-$id')));
+    await settle(tester);
+
+    final offsetAfterDelete = tester
+        .state<ScrollableState>(find.byType(Scrollable).first)
+        .position
+        .pixels;
+    expect(offsetAfterDelete, closeTo(offsetBefore, 1.0),
+        reason: 'deleting the last block must not jump the timeline to 12am');
+
+    await tester.tap(find.text('Undo'));
+    await settle(tester);
+
+    final offsetAfterUndo = tester
+        .state<ScrollableState>(find.byType(Scrollable).first)
+        .position
+        .pixels;
+    expect(offsetAfterUndo, closeTo(offsetBefore, 1.0),
+        reason: 'undoing the last block must not jump the timeline to 12am');
+  });
 }
