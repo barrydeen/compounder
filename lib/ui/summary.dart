@@ -16,7 +16,8 @@ class SummaryScreen extends StatefulWidget {
   /// Celebrate the session: a one-shot confetti burst, then a walkthrough that
   /// scrolls to each personal record, highlights it and dings it. Only the
   /// finish-workout path sets this — browsing an old session from history
-  /// stays quiet.
+  /// stays quiet and keeps the bottom "Delete workout" button, which is hidden
+  /// right after finishing a workout.
   final bool celebrate;
 
   /// Injectable cue player; tests pass a fake. Defaults to the real
@@ -257,18 +258,20 @@ class _SummaryScreenState extends State<SummaryScreen>
                   _prSection(store),
                   const SectionHeader('Exercises'),
                   ...detail.exercises.map((view) => _exerciseCard(store, view)),
-                  const SizedBox(height: 16),
-                  OutlinedButton.icon(
-                    style:
-                        OutlinedButton.styleFrom(foregroundColor: scheme.error),
-                    icon: Icon(Icons.delete_outline, color: scheme.error),
-                    label: Text('Delete workout',
-                        style: TextStyle(color: scheme.error)),
-                    onPressed: () async {
-                      await store.deleteWorkout(widget.workoutId);
-                      if (context.mounted) Navigator.of(context).pop();
-                    },
-                  ),
+                  if (!widget.celebrate) ...[
+                    const SizedBox(height: 16),
+                    OutlinedButton.icon(
+                      style: OutlinedButton.styleFrom(
+                          foregroundColor: scheme.error),
+                      icon: Icon(Icons.delete_outline, color: scheme.error),
+                      label: Text('Delete workout',
+                          style: TextStyle(color: scheme.error)),
+                      onPressed: () async {
+                        await store.deleteWorkout(widget.workoutId);
+                        if (context.mounted) Navigator.of(context).pop();
+                      },
+                    ),
+                  ],
                 ],
               ),
               if (widget.celebrate)

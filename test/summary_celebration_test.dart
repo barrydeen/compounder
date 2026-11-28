@@ -102,6 +102,8 @@ void main() {
 
     final confetti = find.byKey(const ValueKey('summary-confetti'));
     expect(confetti, findsOneWidget);
+    expect(find.text('Delete workout'), findsNothing,
+        reason: 'the post-workout summary must not show the delete button');
     expect(find.descendant(of: confetti, matching: find.byType(CustomPaint)),
         findsOneWidget,
         reason: 'the burst paints while it runs');
@@ -178,6 +180,8 @@ void main() {
     await pumpSummary(tester, sounds, celebrate: false);
 
     expect(find.byKey(const ValueKey('summary-confetti')), findsNothing);
+    expect(find.text('Delete workout'), findsOneWidget,
+        reason: 'opening a past session from history keeps the delete button');
     await tester.pump(const Duration(milliseconds: 750));
     expect(sounds.played, isEmpty,
         reason: 'browsing an old session must stay quiet');
